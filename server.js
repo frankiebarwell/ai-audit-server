@@ -199,9 +199,8 @@ app.post('/webhook/fireflies', async (req, res) => {
         <p><strong>A new AI Readiness Audit transcript is ready.</strong></p>
         <p><strong>Client:</strong> ${title}</p>
         <p><strong>Transcript length:</strong> ${text.split(' ').length} words</p>
-        <p>When you are ready to run the AI analysis, reply to this email with the single word:</p>
-        <p><strong>ANALYSE</strong></p>
-        <p>The system will then read the transcript and produce your internal consultant briefing.</p>
+        <p>When you are ready to run the AI analysis, click the button below:</p>
+        <p><a href="https://ai-audit-server-production-b423.up.railway.app/analyse/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Consultant Briefing</a></p>
         <br><p style="color:#888">Option 10 AI Audit System</p>
       `
     });
@@ -212,7 +211,29 @@ app.post('/webhook/fireflies', async (req, res) => {
   }
 });
 
-// Phase 2: Frankie replies ANALYSE — call this endpoint
+// Phase 2: GET version so you can click a link in the email
+app.get('/analyse/:meetingId', async (req, res) => {
+  res.send(`<html><body style="font-family:Arial;padding:40px">
+    <h2>Triggering analysis...</h2>
+    <p>The consultant briefing is being generated. You will receive an email in approximately 60 seconds.</p>
+    <p style="color:#888">Option 10 AI Audit System</p>
+  </body></html>`);
+  const { meetingId } = req.params;
+  const audit = auditStore[meetingId];
+  if (!audit) { console.error('Phase 2 GET: No audit found for meeting:', meetingId); return; }
+  try {
+    const analysis = await analyseTranscript(audit.transcript);
+    auditStore[meetingId].analysis = analysis;
+    await transporter.sendMail({
+      from: GMAIL_USER, to: NOTIFY_EMAIL,
+      subject: `Analysis Ready — ${audit.title} | MeetingID:${meetingId}`,
+      html: `<p><strong>Your AI Readiness Analysis is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre><hr><p>When ready for the client proposal, click below:</p><p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p><br><p style="color:#888">Option 10 AI Audit System</p>`
+    });
+    console.log('Phase 2 GET: Analysis email sent for:', audit.title);
+  } catch (err) { console.error('Phase 2 GET error:', err.message); }
+});
+
+// Phase 2: POST version (keep for backwards compatibility)
 app.post('/analyse/:meetingId', async (req, res) => {
   res.sendStatus(200);
 
@@ -252,7 +273,28 @@ app.post('/analyse/:meetingId', async (req, res) => {
   }
 });
 
-// Phase 3: Frankie replies PROPOSE — call this endpoint
+// Phase 3: GET version so you can click a link in the email
+app.get('/propose/:meetingId', async (req, res) => {
+  res.send(`<html><body style="font-family:Arial;padding:40px">
+    <h2>Generating client proposal...</h2>
+    <p>The proposal is being written. You will receive an email in approximately 60 seconds.</p>
+    <p style="color:#888">Option 10 AI Audit System</p>
+  </body></html>`);
+  const { meetingId } = req.params;
+  const audit = auditStore[meetingId];
+  if (!audit || !audit.analysis) { console.error('Phase 3 GET: No analysis found for meeting:', meetingId); return; }
+  try {
+    const proposal = await generateProposal(audit.analysis);
+    await transporter.sendMail({
+      from: GMAIL_USER, to: NOTIFY_EMAIL,
+      subject: `Proposal Ready — ${audit.title}`,
+      html: `<p><strong>The client proposal draft is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${proposal}</pre><hr><p>Review and edit before sending to the client.</p><br><p style="color:#888">Option 10 AI Audit System</p>`
+    });
+    console.log('Phase 3 GET: Proposal email sent for:', audit.title);
+  } catch (err) { console.error('Phase 3 GET error:', err.message); }
+});
+
+// Phase 3: POST version (keep for backwards compatibility)
 app.post('/propose/:meetingId', async (req, res) => {
   res.sendStatus(200);
 
