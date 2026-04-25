@@ -173,21 +173,59 @@ ${analysisText}`;
   return data.content[0].text;
 }
 
-// ── In-memory store for pending audits ──────────────────────────────────────
-// Maps meetingId -> { title, transcript, analysis }
+// ── Claude: generate tailored questionnaire ──────────────────────────────────
+
+async function generateQuestionnaire(clientName, companyName, industry) {
+  const prompt = `Do not use emojis. Do not use markdown formatting — no #, ##, **, or similar symbols. Write in plain text only, using capitalised section headings and clear spacing.
+
+You are preparing a pre-audit questionnaire to send to a prospective client ahead of a 30-minute AI Readiness Audit session. The questionnaire will be emailed to them directly.
+
+Client: ${clientName}
+Company: ${companyName}
+Industry: ${industry}
+
+Write a personalised questionnaire with exactly 6 sections and 26 questions total. Address the client by their first name in the introduction. Keep the tone warm, direct, and professional — not corporate or stiff.
+
+Sections:
+1. YOUR BUSINESS AT A GLANCE (5 questions) — staff, tenure, revenue streams, typical week, what keeps them up at night
+2. SALES AND NEW BUSINESS (4 questions) — how they generate clients, sales process, follow-up, biggest frustration
+3. DAY-TO-DAY OPERATIONS (5 questions) — tailor these specifically to a ${industry}. Think about their version of client delivery, the admin that repeats every week, the software they likely use, where time disappears. These should feel like they were written by someone who knows this type of business well.
+4. MARKETING AND VISIBILITY (4 questions) — social media, email communications, paid advertising, biggest frustration
+5. TECHNOLOGY AND AI (4 questions) — current AI tool usage, tech comfort level, team resistance, areas they'd keep human
+6. GOALS AND PRIORITIES (4 questions) — 90-day problem to solve, task they'd eliminate, revenue opportunity, what success looks like in 6 months
+
+End with a short closing note thanking them by first name and asking them to return the completed questionnaire to frankie@option10.com at least 24 hours before their session.`;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  const data = await response.json();
+  if (!data?.content?.[0]?.text) throw new Error('Claude returned no content for questionnaire');
+  return data.content[0].text;
+}
+
+// ── In-memory stores ─────────────────────────────────────────────────────────
+// Pending client context — set by web form, consumed by next Fireflies webhook
+let pendingClient = null;
+
+// Active audits — keyed by Fireflies meeting ID
+// Maps meetingId -> { title, clientName, companyName, industry, transcript, analysis }
 const auditStore = {};
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// Dashboard — entry form
-app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Option 10 — AI Audit System</title>
-  <style>
+const CARD_STYLES = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
     .card { background: #fff; border-radius: 10px; overflow: hidden; width: 100%; max-width: 520px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
@@ -197,20 +235,32 @@ app.get('/', (req, res) => {
     .body { padding: 32px; }
     .field { margin-bottom: 22px; }
     label { display: block; font-size: 14px; font-weight: bold; color: #1A2744; margin-bottom: 8px; }
-    input, select { width: 100%; padding: 12px 14px; border: 1.5px solid #dde1e9; border-radius: 6px; font-size: 15px; color: #222; outline: none; transition: border-color 0.2s; background: #fff; }
-    input:focus, select:focus { border-color: #1A2744; }
+    input { width: 100%; padding: 12px 14px; border: 1.5px solid #dde1e9; border-radius: 6px; font-size: 15px; color: #222; outline: none; transition: border-color 0.2s; background: #fff; }
+    input:focus { border-color: #1A2744; }
     input::placeholder { color: #b0b8c9; }
     .btn { width: 100%; padding: 14px; background: #1A2744; color: #C8A951; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; letter-spacing: 0.4px; transition: opacity 0.2s; margin-top: 6px; }
     .btn:hover { opacity: 0.88; }
+    .body p { color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 12px; }
+    .body strong { color: #1A2744; }
     .footer { padding: 16px 32px; border-top: 1px solid #f0f2f5; text-align: center; }
     .footer p { font-size: 12px; color: #b0b8c9; }
-  </style>
+`;
+
+// Dashboard — new audit entry form
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 10 — AI Audit System</title>
+  <style>${CARD_STYLES}</style>
 </head>
 <body>
   <div class="card">
     <div class="header">
       <h1>Option 10</h1>
-      <p>AI Readiness Audit — Session Launcher</p>
+      <p>AI Readiness Audit — New Session</p>
     </div>
     <div class="body">
       <form action="/start" method="POST">
@@ -227,10 +277,10 @@ app.get('/', (req, res) => {
           <input type="text" id="industry" name="industry" placeholder="e.g. Employment law firm" required>
         </div>
         <div class="field">
-          <label for="meetingId">Fireflies Meeting ID</label>
-          <input type="text" id="meetingId" name="meetingId" placeholder="e.g. 01KPYSGPEM5TWCKFBE2TVQY1PM" required>
+          <label for="clientEmail">Client Email</label>
+          <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
         </div>
-        <button type="submit" class="btn">Launch Audit</button>
+        <button type="submit" class="btn">Send Questionnaire</button>
       </form>
     </div>
     <div class="footer">
@@ -241,43 +291,33 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
-// Handle form submission — prime context and trigger analysis pipeline
+// Handle form submission — generate questionnaire, email client, store pending context
 app.post('/start', async (req, res) => {
-  const { clientName, companyName, industry, meetingId } = req.body;
+  const { clientName, companyName, industry, clientEmail } = req.body;
 
-  if (!clientName || !companyName || !industry || !meetingId) {
+  if (!clientName || !companyName || !industry || !clientEmail) {
     return res.status(400).send('All fields are required.');
   }
 
+  // Respond immediately so the browser doesn't hang
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Option 10 — Processing</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-    .card { background: #fff; border-radius: 10px; overflow: hidden; width: 100%; max-width: 520px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
-    .header { background: #1A2744; padding: 28px 32px; }
-    .header h1 { color: #C8A951; font-size: 22px; font-weight: bold; }
-    .header p { color: #a0aec0; font-size: 14px; margin-top: 4px; }
-    .body { padding: 32px; }
-    .body p { color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 12px; }
-    .body strong { color: #1A2744; }
-    .footer { padding: 16px 32px; border-top: 1px solid #f0f2f5; text-align: center; }
-    .footer p { font-size: 12px; color: #b0b8c9; }
-  </style>
+  <title>Option 10 — Sending</title>
+  <style>${CARD_STYLES}</style>
 </head>
 <body>
   <div class="card">
     <div class="header">
       <h1>Option 10</h1>
-      <p>AI Readiness Audit — Processing</p>
+      <p>AI Readiness Audit — New Session</p>
     </div>
     <div class="body">
-      <p>The audit is running for <strong>${clientName}</strong> at <strong>${companyName}</strong>.</p>
-      <p>Fetching the transcript and generating your consultant briefing now. You will receive an email in approximately 60 seconds.</p>
+      <p>Generating a tailored questionnaire for <strong>${clientName}</strong> at <strong>${companyName}</strong>.</p>
+      <p>It will be emailed to <strong>${clientEmail}</strong> in approximately 30 seconds.</p>
+      <p>You will receive a confirmation once it has been sent.</p>
     </div>
     <div class="footer">
       <p>Option 10 AI Audit System</p>
@@ -286,46 +326,58 @@ app.post('/start', async (req, res) => {
 </body>
 </html>`);
 
-  console.log(`Web form: Starting audit for ${clientName} — ${companyName} (${industry})`);
+  console.log(`New audit: ${clientName} — ${companyName} (${industry}) — ${clientEmail}`);
 
   try {
-    const { title, text } = await fetchTranscript(meetingId);
-    const enrichedTitle = `${clientName} — ${companyName}`;
-    auditStore[meetingId] = {
-      title: enrichedTitle,
-      clientName,
-      companyName,
-      industry,
-      transcript: text,
-      analysis: null
-    };
+    // Generate tailored questionnaire via Claude
+    const questionnaire = await generateQuestionnaire(clientName, companyName, industry);
 
-    console.log(`Web form: Transcript fetched for ${enrichedTitle}`);
+    // Store as pending — consumed by next Fireflies webhook
+    pendingClient = { clientName, companyName, industry, clientEmail };
+    console.log(`Pending client set: ${clientName} — ${companyName}`);
 
-    const analysis = await analyseTranscript(text, { clientName, companyName, industry });
-    auditStore[meetingId].analysis = analysis;
+    // Email questionnaire to client
+    await transporter.sendMail({
+      from: GMAIL_USER,
+      to: clientEmail,
+      subject: `Your AI Readiness Audit — A Few Questions Before We Meet`,
+      html: `
+        <div style="font-family:Arial;max-width:600px;margin:0 auto">
+          <div style="background:#1A2744;padding:24px 32px">
+            <h1 style="color:#C8A951;font-size:20px;margin:0">Option 10</h1>
+            <p style="color:#a0aec0;font-size:13px;margin:6px 0 0">AI Readiness Audit</p>
+          </div>
+          <div style="padding:32px;background:#fff">
+            <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;line-height:1.7;color:#333">${questionnaire}</pre>
+          </div>
+          <div style="padding:16px 32px;background:#f8f8f8;text-align:center">
+            <p style="font-size:12px;color:#999">Option 10 | frankie@option10.com</p>
+          </div>
+        </div>
+      `
+    });
 
+    console.log(`Questionnaire emailed to ${clientEmail}`);
+
+    // Notify Frankie
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `AI Analysis for ${enrichedTitle} is Ready`,
+      subject: `Questionnaire Sent — ${clientName}, ${companyName}`,
       html: `
-        <p><strong>Your AI Readiness Analysis is complete.</strong></p>
-        <p><strong>Client:</strong> ${enrichedTitle}</p>
+        <p><strong>The pre-audit questionnaire has been sent.</strong></p>
+        <p><strong>Client:</strong> ${clientName}</p>
+        <p><strong>Company:</strong> ${companyName}</p>
         <p><strong>Industry:</strong> ${industry}</p>
-        <p><strong>Meeting ID:</strong> ${meetingId}</p>
-        <hr>
-        <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre>
-        <hr>
-        <p>When ready for the client proposal, click below:</p>
-        <p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p>
+        <p><strong>Sent to:</strong> ${clientEmail}</p>
+        <p>The system is now waiting for the Fireflies webhook after your session. The client context will be applied automatically when the recording is processed.</p>
         <br><p style="color:#888">Option 10 AI Audit System</p>
       `
     });
 
-    console.log(`Web form: Analysis email sent for ${enrichedTitle}`);
+    console.log(`Confirmation email sent to ${NOTIFY_EMAIL}`);
   } catch (err) {
-    console.error('Web form error:', err.message);
+    console.error('Start error:', err.message);
   }
 });
 
@@ -343,17 +395,38 @@ app.post('/webhook/fireflies', async (req, res) => {
 
   try {
     const { title, text } = await fetchTranscript(meetingId);
-    auditStore[meetingId] = { title, transcript: text, analysis: null };
 
-    console.log('Phase 1: Transcript fetched for:', title);
+    // Apply pending client context if available, otherwise fall back to meeting title
+    const context = pendingClient || {};
+    const displayTitle = context.clientName
+      ? `${context.clientName} — ${context.companyName}`
+      : title;
+
+    auditStore[meetingId] = {
+      title: displayTitle,
+      clientName: context.clientName || '',
+      companyName: context.companyName || '',
+      industry: context.industry || '',
+      transcript: text,
+      analysis: null
+    };
+
+    // Clear pending client now that it's been consumed
+    if (pendingClient) {
+      console.log(`Phase 1: Applied pending context for ${displayTitle}`);
+      pendingClient = null;
+    }
+
+    console.log('Phase 1: Transcript fetched for:', displayTitle);
 
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `AI Audit for ${title} is Ready`,
+      subject: `AI Audit for ${displayTitle} is Ready`,
       html: `
         <p><strong>A new AI Readiness Audit transcript is ready.</strong></p>
-        <p><strong>Client:</strong> ${title}</p>
+        <p><strong>Client:</strong> ${displayTitle}</p>
+        ${context.industry ? `<p><strong>Industry:</strong> ${context.industry}</p>` : ''}
         <p><strong>Transcript length:</strong> ${text.split(' ').length} words</p>
         <p><strong>Meeting ID:</strong> ${meetingId}</p>
         <p>When you are ready to run the AI analysis, click the button below:</p>
@@ -362,7 +435,7 @@ app.post('/webhook/fireflies', async (req, res) => {
       `
     });
 
-    console.log('Phase 1: Notification email sent for:', title);
+    console.log('Phase 1: Notification email sent for:', displayTitle);
   } catch (err) {
     console.error('Phase 1 error:', err.message);
   }
@@ -379,7 +452,7 @@ app.get('/analyse/:meetingId', async (req, res) => {
   const audit = auditStore[meetingId];
   if (!audit) { console.error('Phase 2 GET: No audit found for meeting:', meetingId); return; }
   try {
-    const analysis = await analyseTranscript(audit.transcript);
+    const analysis = await analyseTranscript(audit.transcript, { clientName: audit.clientName, companyName: audit.companyName, industry: audit.industry });
     auditStore[meetingId].analysis = analysis;
     await transporter.sendMail({
       from: GMAIL_USER, to: NOTIFY_EMAIL,
@@ -405,7 +478,7 @@ app.post('/analyse/:meetingId', async (req, res) => {
   console.log('Phase 2: Running analysis for:', audit.title);
 
   try {
-    const analysis = await analyseTranscript(audit.transcript);
+    const analysis = await analyseTranscript(audit.transcript, { clientName: audit.clientName, companyName: audit.companyName, industry: audit.industry });
     auditStore[meetingId].analysis = analysis;
 
     await transporter.sendMail({
