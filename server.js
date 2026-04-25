@@ -425,8 +425,14 @@ app.post('/webhook/fireflies', async (req, res) => {
   console.log('Phase 1: Received webhook for meeting:', meetingId);
 
   try {
-    // Route based on pending client type set by the web form
-    if (pendingClient?.type === 'profit') {
+    // Ignore webhook if no form was submitted — prevents processing unrelated sessions
+    if (!pendingClient) {
+      console.log('Webhook received but no pending client — ignoring:', meetingId);
+      return;
+    }
+
+    // Route based on session type selected in the web form
+    if (pendingClient.type === 'profit') {
       console.log(`Router: Profit Audit session — forwarding to Revenue Hounds server for ${pendingClient.clientName}`);
       pendingClient = null;
       await forwardToProfitAudit(req.body);
