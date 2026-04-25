@@ -24,6 +24,23 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// ── Routing ──────────────────────────────────────────────────────────────────
+
+const PROFIT_AUDIT_WEBHOOK = 'https://profit-assessment-server-production.up.railway.app/webhook/fireflies';
+
+async function forwardToProfitAudit(body) {
+  try {
+    await fetch(PROFIT_AUDIT_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    console.log('Router: Forwarded to Profit Audit server');
+  } catch (err) {
+    console.error('Router: Failed to forward to Profit Audit server:', err.message);
+  }
+}
+
 // ── Fireflies: fetch transcript ──────────────────────────────────────────────
 
 async function fetchTranscript(meetingId) {
@@ -235,8 +252,8 @@ const CARD_STYLES = `
     .body { padding: 32px; }
     .field { margin-bottom: 22px; }
     label { display: block; font-size: 14px; font-weight: bold; color: #1A2744; margin-bottom: 8px; }
-    input { width: 100%; padding: 12px 14px; border: 1.5px solid #dde1e9; border-radius: 6px; font-size: 15px; color: #222; outline: none; transition: border-color 0.2s; background: #fff; }
-    input:focus { border-color: #1A2744; }
+    input, select { width: 100%; padding: 12px 14px; border: 1.5px solid #dde1e9; border-radius: 6px; font-size: 15px; color: #222; outline: none; transition: border-color 0.2s; background: #fff; }
+    input:focus, select:focus { border-color: #1A2744; }
     input::placeholder { color: #b0b8c9; }
     .btn { width: 100%; padding: 14px; background: #1A2744; color: #C8A951; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; letter-spacing: 0.4px; transition: opacity 0.2s; margin-top: 6px; }
     .btn:hover { opacity: 0.88; }
@@ -265,6 +282,14 @@ app.get('/', (req, res) => {
     <div class="body">
       <form action="/start" method="POST">
         <div class="field">
+          <label for="sessionType">Session Type</label>
+          <select id="sessionType" name="sessionType" required>
+            <option value="">— Select session type —</option>
+            <option value="audit">AI Audit</option>
+            <option value="profit">Profit Audit</option>
+          </select>
+        </div>
+        <div class="field">
           <label for="clientName">Client Name</label>
           <input type="text" id="clientName" name="clientName" placeholder="e.g. Sarah Johnson" required>
         </div>
@@ -291,33 +316,37 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
-// Handle form submission — generate questionnaire, email client, store pending context
+// Handle form submission — store pending context, route by session type
 app.post('/start', async (req, res) => {
-  const { clientName, companyName, industry, clientEmail } = req.body;
+  const { sessionType, clientName, companyName, industry, clientEmail } = req.body;
 
-  if (!clientName || !companyName || !industry || !clientEmail) {
+  if (!sessionType || !clientName || !companyName || !industry || !clientEmail) {
     return res.status(400).send('All fields are required.');
   }
 
-  // Respond immediately so the browser doesn't hang
+  const isAudit = sessionType === 'audit';
+  const sessionLabel = isAudit ? 'AI Audit' : 'Profit Audit';
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Option 10 — Sending</title>
+  <title>Option 10 — Confirmed</title>
   <style>${CARD_STYLES}</style>
 </head>
 <body>
   <div class="card">
     <div class="header">
       <h1>Option 10</h1>
-      <p>AI Readiness Audit — New Session</p>
+      <p>${sessionLabel} — Session Confirmed</p>
     </div>
     <div class="body">
-      <p>Generating a tailored questionnaire for <strong>${clientName}</strong> at <strong>${companyName}</strong>.</p>
-      <p>It will be emailed to <strong>${clientEmail}</strong> in approximately 30 seconds.</p>
-      <p>You will receive a confirmation once it has been sent.</p>
+      <p>${isAudit
+        ? `Generating a tailored questionnaire for <strong>${clientName}</strong> at <strong>${companyName}</strong>. It will be emailed to <strong>${clientEmail}</strong> in approximately 30 seconds.`
+        : `<strong>${clientName}</strong> at <strong>${companyName}</strong> has been registered for a Profit Audit. The system is ready and waiting for the session recording.`
+      }</p>
+      <p>You will receive a confirmation email shortly.</p>
     </div>
     <div class="footer">
       <p>Option 10 AI Audit System</p>
@@ -326,56 +355,58 @@ app.post('/start', async (req, res) => {
 </body>
 </html>`);
 
-  console.log(`New audit: ${clientName} — ${companyName} (${industry}) — ${clientEmail}`);
+  console.log(`New ${sessionLabel}: ${clientName} — ${companyName} (${industry})`);
 
   try {
-    // Generate tailored questionnaire via Claude
-    const questionnaire = await generateQuestionnaire(clientName, companyName, industry);
-
     // Store as pending — consumed by next Fireflies webhook
-    pendingClient = { clientName, companyName, industry, clientEmail };
-    console.log(`Pending client set: ${clientName} — ${companyName}`);
+    pendingClient = { type: sessionType, clientName, companyName, industry, clientEmail };
+    console.log(`Pending client set: ${sessionLabel} — ${clientName} — ${companyName}`);
 
-    // Email questionnaire to client
-    await transporter.sendMail({
-      from: GMAIL_USER,
-      to: clientEmail,
-      subject: `Your AI Readiness Audit — A Few Questions Before We Meet`,
-      html: `
-        <div style="font-family:Arial;max-width:600px;margin:0 auto">
-          <div style="background:#1A2744;padding:24px 32px">
-            <h1 style="color:#C8A951;font-size:20px;margin:0">Option 10</h1>
-            <p style="color:#a0aec0;font-size:13px;margin:6px 0 0">AI Readiness Audit</p>
-          </div>
-          <div style="padding:32px;background:#fff">
-            <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;line-height:1.7;color:#333">${questionnaire}</pre>
-          </div>
-          <div style="padding:16px 32px;background:#f8f8f8;text-align:center">
-            <p style="font-size:12px;color:#999">Option 10 | frankie@option10.com</p>
-          </div>
-        </div>
-      `
-    });
+    if (isAudit) {
+      // Generate tailored questionnaire and email to client
+      const questionnaire = await generateQuestionnaire(clientName, companyName, industry);
 
-    console.log(`Questionnaire emailed to ${clientEmail}`);
+      await transporter.sendMail({
+        from: GMAIL_USER,
+        to: clientEmail,
+        subject: `Your AI Readiness Audit — A Few Questions Before We Meet`,
+        html: `
+          <div style="font-family:Arial;max-width:600px;margin:0 auto">
+            <div style="background:#1A2744;padding:24px 32px">
+              <h1 style="color:#C8A951;font-size:20px;margin:0">Option 10</h1>
+              <p style="color:#a0aec0;font-size:13px;margin:6px 0 0">AI Readiness Audit</p>
+            </div>
+            <div style="padding:32px;background:#fff">
+              <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;line-height:1.7;color:#333">${questionnaire}</pre>
+            </div>
+            <div style="padding:16px 32px;background:#f8f8f8;text-align:center">
+              <p style="font-size:12px;color:#999">Option 10 | frankie@option10.com</p>
+            </div>
+          </div>
+        `
+      });
 
-    // Notify Frankie
+      console.log(`AI Audit questionnaire emailed to ${clientEmail}`);
+    }
+
+    // Notify Frankie either way
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `Questionnaire Sent — ${clientName}, ${companyName}`,
+      subject: `${sessionLabel} Session Ready — ${clientName}, ${companyName}`,
       html: `
-        <p><strong>The pre-audit questionnaire has been sent.</strong></p>
+        <p><strong>${sessionLabel} session has been set up.</strong></p>
         <p><strong>Client:</strong> ${clientName}</p>
         <p><strong>Company:</strong> ${companyName}</p>
         <p><strong>Industry:</strong> ${industry}</p>
-        <p><strong>Sent to:</strong> ${clientEmail}</p>
-        <p>The system is now waiting for the Fireflies webhook after your session. The client context will be applied automatically when the recording is processed.</p>
+        <p><strong>Email:</strong> ${clientEmail}</p>
+        ${isAudit ? '<p>The pre-audit questionnaire has been emailed to the client.</p>' : ''}
+        <p>The system is waiting for the Fireflies webhook. When the session recording is processed, it will be routed to the <strong>${sessionLabel}</strong> pipeline automatically.</p>
         <br><p style="color:#888">Option 10 AI Audit System</p>
       `
     });
 
-    console.log(`Confirmation email sent to ${NOTIFY_EMAIL}`);
+    console.log(`Confirmation email sent for ${sessionLabel} — ${clientName}`);
   } catch (err) {
     console.error('Start error:', err.message);
   }
@@ -394,6 +425,14 @@ app.post('/webhook/fireflies', async (req, res) => {
   console.log('Phase 1: Received webhook for meeting:', meetingId);
 
   try {
+    // Route based on pending client type set by the web form
+    if (pendingClient?.type === 'profit') {
+      console.log(`Router: Profit Audit session — forwarding to Revenue Hounds server for ${pendingClient.clientName}`);
+      pendingClient = null;
+      await forwardToProfitAudit(req.body);
+      return;
+    }
+
     const { title, text } = await fetchTranscript(meetingId);
 
     // Apply pending client context if available, otherwise fall back to meeting title
