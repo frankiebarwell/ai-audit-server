@@ -54,20 +54,22 @@ async function fetchTranscript(meetingId) {
 // ── Claude: analyse transcript ───────────────────────────────────────────────
 
 async function analyseTranscript(transcriptText) {
-  const prompt = `Do not use emojis. Write in plain professional text only.
+  const prompt = `Do not use emojis. Do not use markdown formatting — no #, ##, **, or similar symbols. Write in plain professional text only, using capitalised section headings and clear paragraph breaks.
 
-You are an expert AI implementation consultant. A client has just completed a 30-minute AI Readiness Audit session. You are preparing your internal working notes — a structured consultant briefing that will inform your recommendations and proposal.
+You are an expert AI implementation consultant with a direct, no-nonsense style. A client has just completed a 30-minute AI Readiness Audit session. You are preparing your internal working notes — a structured consultant briefing that will inform your recommendations and proposal.
+
+Write with confidence and specificity. You are a seasoned operator who has seen this pattern before, not an academic summarising a case study. Your observations should feel like a sharp consultant talking to a trusted colleague — direct, candid, occasionally wry. Call things what they are. If the business is a mess, say so. If the opportunity is obvious, say so. This is for your eyes only.
 
 Analyse the transcript below and produce a detailed internal report with the following sections:
 
 1. MEETING OVERVIEW
-Client name and business. Industry. Overall AI readiness impression in 2-3 sentences.
+Client name and business. Industry. Your honest first impression of their AI readiness in 2-3 sentences — don't sanitise it.
 
 2. CURRENT STATE ASSESSMENT
-What tools and technology does the client currently use? What processes are manual or inefficient? Where is time being lost? Their current comfort level with technology and AI?
+What tools and technology does the client currently use? What processes are manual or inefficient? Where is time being lost? How comfortable are they with technology and AI — and how does that shape the conversation ahead?
 
 3. PAIN POINTS AND PRIORITIES
-The 3-5 most significant problems or frustrations the client expressed. Quote directly where possible. Note which feel most urgent.
+The 3-5 most significant problems or frustrations the client expressed. Quote directly where possible. Note which feel most urgent — and which they may not have fully articulated yet.
 
 4. AI READINESS SCORE
 Score the client across these 6 dimensions (1-5 scale with brief rationale for each):
@@ -80,13 +82,13 @@ Score the client across these 6 dimensions (1-5 scale with brief rationale for e
 Overall readiness score out of 30.
 
 5. TOP AUTOMATION OPPORTUNITIES
-List the 5-7 highest-impact AI automation opportunities specific to this client. For each: what it automates, estimated time saved per week, complexity (low/medium/high), and ROI category.
+List the 5-7 highest-impact AI automation opportunities specific to this client. For each: what it automates, estimated time saved per week, complexity (low/medium/high), and ROI category. Be specific — generic observations are useless here.
 
 6. QUICK WINS
-The 3 things that could be implemented within 30 days with minimal disruption and visible impact.
+The 3 things that could be implemented within 30 days with minimal disruption and visible impact. These should feel genuinely achievable, not aspirational fluff.
 
 7. CONSULTANT NOTES
-Any hesitations, buying signals, objections raised, or anything that should inform how you position the proposal. Be candid — this is for your eyes only.
+Buying signals, hesitations, objections raised, red flags, or anything that should shape how you position the proposal. Be completely candid — this is your private read on the client and the room.
 
 TRANSCRIPT:
 ${transcriptText}`;
@@ -113,34 +115,34 @@ ${transcriptText}`;
 // ── Claude: generate proposal ────────────────────────────────────────────────
 
 async function generateProposal(analysisText) {
-  const prompt = `Do not use emojis. Write in plain professional text only.
+  const prompt = `Do not use emojis. Do not use markdown formatting — no #, ##, **, or similar symbols. Write in plain professional text only, using capitalised section headings and clear paragraph breaks.
 
 You are an expert AI implementation consultant preparing a tailored proposal for a prospective client following their AI Readiness Audit session.
 
-Using the internal analysis report below, write a professional client-facing proposal document. This should feel authoritative, specific to their situation, and clearly articulate the value of moving forward.
+Using the internal analysis report below, write a professional client-facing proposal document. The tone should feel like a senior advisor who has done their homework — authoritative, warm, and specific. The client should feel genuinely understood, not processed. Write as someone who has diagnosed their situation precisely and has a clear plan for what to build. Avoid corporate filler. Every sentence should earn its place.
 
 Structure the proposal as follows:
 
 1. EXECUTIVE SUMMARY
-2-3 paragraphs. Acknowledge what you heard. Name the core challenge. Position AI implementation as the lever that changes the trajectory.
+2-3 paragraphs. Acknowledge what you heard in the audit. Name the core challenge without sugarcoating it. Position AI implementation as the specific lever that changes the trajectory — not AI in the abstract, but the work you will do together.
 
 2. YOUR SITUATION
-A brief, empathetic summary of where the client is today. Make them feel deeply understood. Use specifics from the audit.
+A direct, empathetic summary of where the client is today. Make them feel deeply understood. Use specifics from the audit. This section should feel like you were paying close attention — because you were.
 
 3. WHAT WE WILL BUILD
-The specific AI systems and automations recommended. Name the tools. Describe what each does in plain language. State the business outcome it delivers.
+The specific AI systems and automations recommended. Name the tools. Describe what each does in plain language a smart business owner will immediately grasp. State the business outcome each one delivers — not the feature, the result.
 
 4. WHAT THIS MEANS FOR YOUR BUSINESS
-Quantify where possible: time saved per week, estimated revenue impact, cost reduction, client experience improvement.
+Quantify where possible: time saved per week, estimated revenue impact, cost reduction, client experience improvement. Be specific. Round numbers are fine. Vague promises are not.
 
 5. IMPLEMENTATION ROADMAP
-A simple 30/60/90 day timeline. What gets built in each phase.
+A simple 30/60/90 day timeline. What gets built in each phase. Keep it practical and sequenced — early wins first, complexity later.
 
 6. YOUR INVESTMENT
 Option 10 AI Growth Accelerator: $5,000/month over 3 months ($15,000 total). Frame as an investment with a clear return. Note that the $497 Audit fee is credited against Month 1 if they proceed within 14 days.
 
 7. NEXT STEPS
-One clear action: reply to book a 45-minute proposal walkthrough call.
+One clear action: reply to book a 45-minute proposal walkthrough call. Make it easy and low-friction.
 
 INTERNAL ANALYSIS:
 ${analysisText}`;
@@ -194,11 +196,12 @@ app.post('/webhook/fireflies', async (req, res) => {
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `AI Audit Ready — ${title} | MeetingID:${meetingId}`,
+      subject: `AI Audit for ${title} is Ready`,
       html: `
         <p><strong>A new AI Readiness Audit transcript is ready.</strong></p>
         <p><strong>Client:</strong> ${title}</p>
         <p><strong>Transcript length:</strong> ${text.split(' ').length} words</p>
+        <p><strong>Meeting ID:</strong> ${meetingId}</p>
         <p>When you are ready to run the AI analysis, click the button below:</p>
         <p><a href="https://ai-audit-server-production-b423.up.railway.app/analyse/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Consultant Briefing</a></p>
         <br><p style="color:#888">Option 10 AI Audit System</p>
@@ -226,8 +229,8 @@ app.get('/analyse/:meetingId', async (req, res) => {
     auditStore[meetingId].analysis = analysis;
     await transporter.sendMail({
       from: GMAIL_USER, to: NOTIFY_EMAIL,
-      subject: `Analysis Ready — ${audit.title} | MeetingID:${meetingId}`,
-      html: `<p><strong>Your AI Readiness Analysis is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre><hr><p>When ready for the client proposal, click below:</p><p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p><br><p style="color:#888">Option 10 AI Audit System</p>`
+      subject: `AI Analysis for ${audit.title} is Ready`,
+      html: `<p><strong>Your AI Readiness Analysis is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><p><strong>Meeting ID:</strong> ${meetingId}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre><hr><p>When ready for the client proposal, click below:</p><p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p><br><p style="color:#888">Option 10 AI Audit System</p>`
     });
     console.log('Phase 2 GET: Analysis email sent for:', audit.title);
   } catch (err) { console.error('Phase 2 GET error:', err.message); }
@@ -254,16 +257,17 @@ app.post('/analyse/:meetingId', async (req, res) => {
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `Analysis Ready — ${audit.title} | MeetingID:${meetingId}`,
+      subject: `AI Analysis for ${audit.title} is Ready`,
       html: `
         <p><strong>Your AI Readiness Analysis is complete.</strong></p>
         <p><strong>Client:</strong> ${audit.title}</p>
+        <p><strong>Meeting ID:</strong> ${meetingId}</p>
         <hr>
         <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre>
         <hr>
         <p>When you are ready to generate the client proposal, reply to this email with the single word:</p>
         <p><strong>PROPOSE</strong></p>
-        <br><p style="color:#888">Option 10 AI Audit System | MeetingID:${meetingId}</p>
+        <br><p style="color:#888">Option 10 AI Audit System</p>
       `
     });
 
@@ -287,7 +291,7 @@ app.get('/propose/:meetingId', async (req, res) => {
     const proposal = await generateProposal(audit.analysis);
     await transporter.sendMail({
       from: GMAIL_USER, to: NOTIFY_EMAIL,
-      subject: `Proposal Ready — ${audit.title}`,
+      subject: `AI Proposal for ${audit.title} is Ready`,
       html: `<p><strong>The client proposal draft is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${proposal}</pre><hr><p>Review and edit before sending to the client.</p><br><p style="color:#888">Option 10 AI Audit System</p>`
     });
     console.log('Phase 3 GET: Proposal email sent for:', audit.title);
@@ -314,7 +318,7 @@ app.post('/propose/:meetingId', async (req, res) => {
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `Proposal Ready — ${audit.title}`,
+      subject: `AI Proposal for ${audit.title} is Ready`,
       html: `
         <p><strong>The client proposal draft is complete.</strong></p>
         <p><strong>Client:</strong> ${audit.title}</p>
