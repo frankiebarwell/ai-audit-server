@@ -4,6 +4,7 @@ const nodemailer = require('nodemailer');
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const {
   FIREFLIES_API_KEY,
@@ -53,10 +54,16 @@ async function fetchTranscript(meetingId) {
 
 // ── Claude: analyse transcript ───────────────────────────────────────────────
 
-async function analyseTranscript(transcriptText) {
+async function analyseTranscript(transcriptText, context = {}) {
+  const clientContext = context.clientName
+    ? `Client: ${context.clientName} | Company: ${context.companyName} | Industry: ${context.industry}\n\n`
+    : '';
+
   const prompt = `Do not use emojis. Do not use markdown formatting — no #, ##, **, or similar symbols. Write in plain professional text only, using capitalised section headings and clear paragraph breaks.
 
 You are an expert AI implementation consultant with a direct, no-nonsense style. A client has just completed a 30-minute AI Readiness Audit session. You are preparing your internal working notes — a structured consultant briefing that will inform your recommendations and proposal.
+
+${clientContext}
 
 Write with confidence and specificity. You are a seasoned operator who has seen this pattern before, not an academic summarising a case study. Your observations should feel like a sharp consultant talking to a trusted colleague — direct, candid, occasionally wry. Call things what they are. If the business is a mess, say so. If the opportunity is obvious, say so. This is for your eyes only.
 
@@ -172,8 +179,155 @@ const auditStore = {};
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// Health check
-app.get('/', (req, res) => res.send('AI Audit Server running.'));
+// Dashboard — entry form
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 10 — AI Audit System</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { background: #fff; border-radius: 10px; overflow: hidden; width: 100%; max-width: 520px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
+    .header { background: #1A2744; padding: 28px 32px; }
+    .header h1 { color: #C8A951; font-size: 22px; font-weight: bold; letter-spacing: 0.3px; }
+    .header p { color: #a0aec0; font-size: 14px; margin-top: 4px; }
+    .body { padding: 32px; }
+    .field { margin-bottom: 22px; }
+    label { display: block; font-size: 14px; font-weight: bold; color: #1A2744; margin-bottom: 8px; }
+    input, select { width: 100%; padding: 12px 14px; border: 1.5px solid #dde1e9; border-radius: 6px; font-size: 15px; color: #222; outline: none; transition: border-color 0.2s; background: #fff; }
+    input:focus, select:focus { border-color: #1A2744; }
+    input::placeholder { color: #b0b8c9; }
+    .btn { width: 100%; padding: 14px; background: #1A2744; color: #C8A951; font-size: 16px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; letter-spacing: 0.4px; transition: opacity 0.2s; margin-top: 6px; }
+    .btn:hover { opacity: 0.88; }
+    .footer { padding: 16px 32px; border-top: 1px solid #f0f2f5; text-align: center; }
+    .footer p { font-size: 12px; color: #b0b8c9; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Option 10</h1>
+      <p>AI Readiness Audit — Session Launcher</p>
+    </div>
+    <div class="body">
+      <form action="/start" method="POST">
+        <div class="field">
+          <label for="clientName">Client Name</label>
+          <input type="text" id="clientName" name="clientName" placeholder="e.g. Sarah Johnson" required>
+        </div>
+        <div class="field">
+          <label for="companyName">Company / Business Name</label>
+          <input type="text" id="companyName" name="companyName" placeholder="e.g. Apex Legal" required>
+        </div>
+        <div class="field">
+          <label for="industry">Industry</label>
+          <input type="text" id="industry" name="industry" placeholder="e.g. Employment law firm" required>
+        </div>
+        <div class="field">
+          <label for="meetingId">Fireflies Meeting ID</label>
+          <input type="text" id="meetingId" name="meetingId" placeholder="e.g. 01KPYSGPEM5TWCKFBE2TVQY1PM" required>
+        </div>
+        <button type="submit" class="btn">Launch Audit</button>
+      </form>
+    </div>
+    <div class="footer">
+      <p>Option 10 AI Audit System</p>
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
+// Handle form submission — prime context and trigger analysis pipeline
+app.post('/start', async (req, res) => {
+  const { clientName, companyName, industry, meetingId } = req.body;
+
+  if (!clientName || !companyName || !industry || !meetingId) {
+    return res.status(400).send('All fields are required.');
+  }
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 10 — Processing</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { background: #fff; border-radius: 10px; overflow: hidden; width: 100%; max-width: 520px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
+    .header { background: #1A2744; padding: 28px 32px; }
+    .header h1 { color: #C8A951; font-size: 22px; font-weight: bold; }
+    .header p { color: #a0aec0; font-size: 14px; margin-top: 4px; }
+    .body { padding: 32px; }
+    .body p { color: #444; font-size: 15px; line-height: 1.6; margin-bottom: 12px; }
+    .body strong { color: #1A2744; }
+    .footer { padding: 16px 32px; border-top: 1px solid #f0f2f5; text-align: center; }
+    .footer p { font-size: 12px; color: #b0b8c9; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Option 10</h1>
+      <p>AI Readiness Audit — Processing</p>
+    </div>
+    <div class="body">
+      <p>The audit is running for <strong>${clientName}</strong> at <strong>${companyName}</strong>.</p>
+      <p>Fetching the transcript and generating your consultant briefing now. You will receive an email in approximately 60 seconds.</p>
+    </div>
+    <div class="footer">
+      <p>Option 10 AI Audit System</p>
+    </div>
+  </div>
+</body>
+</html>`);
+
+  console.log(`Web form: Starting audit for ${clientName} — ${companyName} (${industry})`);
+
+  try {
+    const { title, text } = await fetchTranscript(meetingId);
+    const enrichedTitle = `${clientName} — ${companyName}`;
+    auditStore[meetingId] = {
+      title: enrichedTitle,
+      clientName,
+      companyName,
+      industry,
+      transcript: text,
+      analysis: null
+    };
+
+    console.log(`Web form: Transcript fetched for ${enrichedTitle}`);
+
+    const analysis = await analyseTranscript(text, { clientName, companyName, industry });
+    auditStore[meetingId].analysis = analysis;
+
+    await transporter.sendMail({
+      from: GMAIL_USER,
+      to: NOTIFY_EMAIL,
+      subject: `AI Analysis for ${enrichedTitle} is Ready`,
+      html: `
+        <p><strong>Your AI Readiness Analysis is complete.</strong></p>
+        <p><strong>Client:</strong> ${enrichedTitle}</p>
+        <p><strong>Industry:</strong> ${industry}</p>
+        <p><strong>Meeting ID:</strong> ${meetingId}</p>
+        <hr>
+        <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre>
+        <hr>
+        <p>When ready for the client proposal, click below:</p>
+        <p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p>
+        <br><p style="color:#888">Option 10 AI Audit System</p>
+      `
+    });
+
+    console.log(`Web form: Analysis email sent for ${enrichedTitle}`);
+  } catch (err) {
+    console.error('Web form error:', err.message);
+  }
+});
 
 // Phase 1: Fireflies webhook fires when meeting is transcribed
 app.post('/webhook/fireflies', async (req, res) => {
