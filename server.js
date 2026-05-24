@@ -183,7 +183,7 @@ ${clientContext}
 
 Write with confidence and specificity. You are a seasoned operator who has seen this pattern before, not an academic summarising a case study. Your observations should feel like a sharp consultant talking to a trusted colleague — direct, candid, occasionally wry. Call things what they are. If the business is a mess, say so. If the opportunity is obvious, say so. This is for your eyes only.
 
-Analyse the transcript below and produce a detailed internal report with the following sections:
+Analyze the transcript below and produce a detailed internal report with the following sections:
 
 1. MEETING OVERVIEW
 Client name and business. Industry. Your honest first impression of their AI readiness in 2-3 sentences — don't sanitise it.
@@ -709,7 +709,7 @@ app.get('/', requireToken, (req, res) => {
       <p>AI Readiness Audit — Get Started</p>
     </div>
     <div class="body">
-      <p style="margin-bottom:24px;color:#555;font-size:14px;line-height:1.6">Please fill in your details below. We will send your personalised preparation guide by email, and Frankie will be in touch to arrange your session.</p>
+      <p style="margin-bottom:24px;color:#555;font-size:14px;line-height:1.6">Please fill in your details below. We will send your personalized preparation guide by email, and Frankie will be in touch to arrange your session.</p>
       <form action="/start" method="POST">
         <input type="hidden" name="token" value="${req.query.token || ''}">
         <div class="field">
@@ -845,7 +845,7 @@ app.post('/start', requireToken, async (req, res) => {
       subject: `Questionnaire Sent — ${clientName}, ${companyName}`,
       html: `
         <p><strong>A new prospect has registered for an AI Readiness Audit.</strong></p>
-        <p>Their personalised questionnaire has been sent. No action needed from you yet — you will receive a full briefing email with their completed answers and your next steps once they upload the questionnaire.</p>
+        <p>Their personalized questionnaire has been sent. No action needed from you yet — you will receive a full briefing email with their completed answers and your next steps once they upload the questionnaire.</p>
         <br>
         <table style="font-family:Arial;font-size:14px;border-collapse:collapse">
           <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Name</strong></td><td style="color:#222">${clientName}</td></tr>
@@ -1089,7 +1089,7 @@ app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
                 <span style="color:#555">Name it anything you like. Fireflies will join automatically as long as your Google Calendar is connected at <a href="https://app.fireflies.ai" style="color:#1A2744">app.fireflies.ai</a>.</span>
                 <br><br>
                 <strong style="color:#1A2744">4. Run the 30-minute session — then do nothing</strong><br>
-                <span style="color:#555">Your consultant briefing and draft proposal will arrive automatically within 3 minutes of the call ending. Review the proposal, personalise it, and send it from your own email.</span>
+                <span style="color:#555">Your consultant briefing and draft proposal will arrive automatically within 3 minutes of the call ending. Review the proposal, personalize it, and send it from your own email.</span>
               </td></tr>
             </table>
 
@@ -1192,7 +1192,7 @@ async function runFullChain(meetingId) {
             <span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span>
           </div>
           <div style="padding:24px;background:#fff">
-            <p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalise before sending. Confirm pricing, adjust any figures that feel generic, then send from your own email.</p>
+            <p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalize before sending. Confirm pricing, adjust any figures that feel generic, then send from your own email.</p>
             <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
             <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${proposal}</pre>
           </div>
@@ -1387,7 +1387,7 @@ app.get('/propose/:meetingId', async (req, res) => {
     await transporter.sendMail({
       from: GMAIL_USER, to: NOTIFY_EMAIL,
       subject: `Draft Proposal Ready — ${audit.title}`,
-      html: `<div style="font-family:Arial;max-width:700px"><div style="background:#1A2744;padding:20px 28px"><span style="color:#C8A951;font-size:18px;font-weight:bold">Draft Client Proposal</span><span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span></div><div style="padding:24px"><p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalise before sending.</p><hr style="border:none;border-top:1px solid #eee"><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${proposal}</pre></div></div>`
+      html: `<div style="font-family:Arial;max-width:700px"><div style="background:#1A2744;padding:20px 28px"><span style="color:#C8A951;font-size:18px;font-weight:bold">Draft Client Proposal</span><span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span></div><div style="padding:24px"><p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalize before sending.</p><hr style="border:none;border-top:1px solid #eee"><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${proposal}</pre></div></div>`
     });
     console.log('Fallback propose: Email sent for', audit.title);
   } catch (err) { console.error('Fallback propose error:', err.message); }
