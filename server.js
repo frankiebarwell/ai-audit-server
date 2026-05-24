@@ -697,27 +697,27 @@ app.get('/', requireToken, (req, res) => {
         <input type="hidden" name="token" value="${req.query.token || ''}">
         <div class="field">
           <label for="clientName">Your Name</label>
-          <input type="text" id="clientName" name="clientName" placeholder="e.g. Sarah Johnson" required>
+          <input type="text" id="clientName" name="clientName" placeholder="Your full name" required>
         </div>
         <div class="field">
           <label for="companyName">Company / Business Name</label>
-          <input type="text" id="companyName" name="companyName" placeholder="e.g. Apex Legal" required>
+          <input type="text" id="companyName" name="companyName" placeholder="Your company or business name" required>
         </div>
         <div class="field">
           <label for="industry">Industry</label>
-          <input type="text" id="industry" name="industry" placeholder="e.g. Employment law firm" required>
+          <input type="text" id="industry" name="industry" placeholder="e.g. Real estate, financial planning, retail" required>
         </div>
         <div class="field">
-          <label for="position">Position within the Company</label>
-          <input type="text" id="position" name="position" placeholder="e.g. Managing Partner, Practice Manager, Director" required>
+          <label for="position">Your Role</label>
+          <input type="text" id="position" name="position" placeholder="e.g. Owner, Director, General Manager" required>
         </div>
         <div class="field">
-          <label for="services">Services They Offer</label>
-          <input type="text" id="services" name="services" placeholder="e.g. Divorce, child custody, prenuptial agreements, adoption" required>
+          <label for="services">What Your Business Does</label>
+          <input type="text" id="services" name="services" placeholder="Brief description of your products or services" required>
         </div>
         <div class="field">
-          <label for="clientEmail">Client Email</label>
-          <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
+          <label for="clientEmail">Your Email Address</label>
+          <input type="email" id="clientEmail" name="clientEmail" placeholder="your@email.com" required>
         </div>
         <button type="submit" class="btn">Send Questionnaire</button>
       </form>
