@@ -758,6 +758,110 @@ app.post('/start', requireToken, async (req, res) => {
   }
 });
 
+// ── Re-register a client (no email sent) ─────────────────────────────────────
+// Use this when a client submitted the form weeks ago and the server has restarted
+// since then, clearing them from the pending list. Fill in their details from the
+// Google Sheet and submit — they're silently added back, ready for the Zoom call.
+
+app.get('/register', requireToken, (req, res) => {
+  const pending = [...pendingClients.entries()].map(([key, c]) =>
+    `<tr><td>${c.clientName}</td><td>${c.companyName}</td><td>${c.industry}</td></tr>`
+  ).join('') || '<tr><td colspan="3" style="color:#999;font-style:italic">No clients currently registered</td></tr>';
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 10 — Re-register Client</title>
+  <style>${CARD_STYLES}
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
+    th { background: #1A2744; color: #C8A951; padding: 8px 10px; text-align: left; }
+    td { padding: 8px 10px; border-bottom: 1px solid #f0f2f5; color: #444; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:52px;display:block;margin-bottom:10px">
+      <p>Re-register Client for Zoom Call</p>
+    </div>
+    <div class="body">
+      <p>Use this form to re-add a client to the active list before their Zoom call. <strong>No email is sent to the client.</strong> Copy their details from the Google Sheet tracker.</p>
+      <form action="/register?token=${req.query.token || ''}" method="POST">
+        <input type="hidden" name="token" value="${req.query.token || ''}">
+        <div class="field">
+          <label for="clientName">Client Name</label>
+          <input type="text" id="clientName" name="clientName" placeholder="e.g. Sarah Johnson" required>
+        </div>
+        <div class="field">
+          <label for="companyName">Company / Business Name</label>
+          <input type="text" id="companyName" name="companyName" placeholder="e.g. Apex Legal" required>
+        </div>
+        <div class="field">
+          <label for="industry">Industry</label>
+          <input type="text" id="industry" name="industry" placeholder="e.g. Employment law firm" required>
+        </div>
+        <div class="field">
+          <label for="position">Position within the Company</label>
+          <input type="text" id="position" name="position" placeholder="e.g. Managing Partner" required>
+        </div>
+        <div class="field">
+          <label for="services">Services They Offer</label>
+          <input type="text" id="services" name="services" placeholder="e.g. Divorce, child custody, adoption" required>
+        </div>
+        <div class="field">
+          <label for="clientEmail">Client Email</label>
+          <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
+        </div>
+        <button type="submit" class="btn">Register Client</button>
+      </form>
+      <h3 style="margin-top:28px;color:#1A2744;font-size:15px">Currently Active Clients</h3>
+      <table>
+        <tr><th>Name</th><th>Company</th><th>Industry</th></tr>
+        ${pending}
+      </table>
+    </div>
+    <div class="footer"><p>Option 10 AI Audit System</p></div>
+  </div>
+</body>
+</html>`);
+});
+
+app.post('/register', requireToken, (req, res) => {
+  const { clientName, companyName, industry, position, services, clientEmail } = req.body;
+  if (!clientName || !companyName || !industry || !position || !services || !clientEmail) {
+    return res.status(400).send('All fields are required.');
+  }
+  const key = clientName.toLowerCase().trim();
+  pendingClients.set(key, { clientName, companyName, industry, position, services, clientEmail });
+  console.log(`Re-registered client: ${clientName} — ${companyName} (${pendingClients.size} in pipeline)`);
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Option 10 — Client Registered</title>
+  <style>${CARD_STYLES}</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:52px;display:block;margin-bottom:10px">
+      <p>Re-register Client for Zoom Call</p>
+    </div>
+    <div class="body">
+      <p><strong>${clientName}</strong> from <strong>${companyName}</strong> has been registered and is ready for their Zoom call.</p>
+      <p style="margin-top:12px;color:#666;font-size:14px">Remember to name the Zoom meeting exactly: <strong>AI Audit — ${clientName}</strong></p>
+      <a href="/register?token=${req.query.token || ''}" style="display:block;margin-top:24px;text-align:center;padding:12px;background:#1A2744;color:#C8A951;font-weight:bold;border-radius:6px;text-decoration:none">Register Another Client</a>
+    </div>
+    <div class="footer"><p>Option 10 AI Audit System</p></div>
+  </div>
+</body>
+</html>`);
+});
+
 // Phase 1: Fireflies webhook fires when meeting is transcribed
 app.post('/webhook/fireflies', async (req, res) => {
   res.sendStatus(200); // acknowledge immediately
