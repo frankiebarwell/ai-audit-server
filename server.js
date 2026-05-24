@@ -43,9 +43,11 @@ async function initDb() {
       services     TEXT NOT NULL,
       client_email TEXT NOT NULL,
       upload_token TEXT UNIQUE NOT NULL,
+      scheduled_date DATE,
       questionnaire_answers TEXT,
       created_at   TIMESTAMPTZ DEFAULT NOW()
-    )
+    );
+    ALTER TABLE pending_clients ADD COLUMN IF NOT EXISTS scheduled_date DATE
   `);
   console.log('Database ready');
 }
@@ -54,12 +56,14 @@ async function dbSaveClient(data) {
   if (!pool) return;
   const key = data.clientName.toLowerCase().trim();
   const token = crypto.randomBytes(16).toString('hex');
+  const scheduledDate = data.scheduledDate || null;
   await pool.query(`
-    INSERT INTO pending_clients (client_key, client_name, company_name, industry, position, services, client_email, upload_token)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    INSERT INTO pending_clients (client_key, client_name, company_name, industry, position, services, client_email, upload_token, scheduled_date)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     ON CONFLICT (client_key) DO UPDATE SET
-      company_name=$3, industry=$4, position=$5, services=$6, client_email=$7, upload_token=EXCLUDED.upload_token
-  `, [key, data.clientName, data.companyName, data.industry, data.position, data.services, data.clientEmail, token]);
+      company_name=$3, industry=$4, position=$5, services=$6, client_email=$7,
+      upload_token=EXCLUDED.upload_token, scheduled_date=$9
+  `, [key, data.clientName, data.companyName, data.industry, data.position, data.services, data.clientEmail, token, scheduledDate]);
   const row = await pool.query('SELECT upload_token FROM pending_clients WHERE client_key=$1', [key]);
   return row.rows[0]?.upload_token;
 }
@@ -714,6 +718,10 @@ app.get('/', requireToken, (req, res) => {
           <label for="clientEmail">Client Email</label>
           <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
         </div>
+        <div class="field">
+          <label for="scheduledDate">Zoom Call Date</label>
+          <input type="date" id="scheduledDate" name="scheduledDate" required>
+        </div>
         <button type="submit" class="btn">Send Questionnaire</button>
       </form>
     </div>
@@ -727,9 +735,9 @@ app.get('/', requireToken, (req, res) => {
 
 // Handle form submission — generate questionnaire, email client, store pending context
 app.post('/start', requireToken, async (req, res) => {
-  const { clientName, companyName, industry, position, services, clientEmail } = req.body;
+  const { clientName, companyName, industry, position, services, clientEmail, scheduledDate } = req.body;
 
-  if (!clientName || !companyName || !industry || !position || !services || !clientEmail) {
+  if (!clientName || !companyName || !industry || !position || !services || !clientEmail || !scheduledDate) {
     return res.status(400).send('All fields are required.');
   }
 
@@ -751,7 +759,7 @@ app.post('/start', requireToken, async (req, res) => {
       <p>Generating a tailored questionnaire for <strong>${clientName}</strong> (${position}) at <strong>${companyName}</strong>.</p>
       <p>It will be emailed to <strong>${clientEmail}</strong> in approximately 30 seconds.</p>
       <p>You will receive a confirmation once it has been sent.</p>
-      <p style="margin-top:16px;padding:12px 16px;background:#f5f0e0;border-left:3px solid #C8A951;font-size:14px;color:#555">When you schedule the Zoom session, name the meeting: <strong style="color:#1A2744">AI Audit — ${clientName}</strong></p>
+      <p style="margin-top:16px;padding:12px 16px;background:#f5f0e0;border-left:3px solid #C8A951;font-size:14px;color:#555">Zoom call scheduled for: <strong style="color:#1A2744">${new Date(scheduledDate).toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric', timeZone:'UTC' })}</strong>. Fireflies will join automatically if your calendar is connected.</p>
     </div>
     <div class="footer">
       <p>Option 10 AI Audit System</p>
@@ -765,7 +773,7 @@ app.post('/start', requireToken, async (req, res) => {
   try {
     const questionnaire = await generateQuestionnaire(clientName, companyName, industry, position, services);
 
-    const uploadToken = await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail });
+    const uploadToken = await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail, scheduledDate });
     pendingClients.set(clientName.toLowerCase().trim(), { clientName, companyName, industry, position, services, clientEmail });
     console.log(`Pending client added: ${clientName} — ${companyName}`);
     const uploadUrl = `https://audit.option10.com/upload/${uploadToken}`;
@@ -905,6 +913,10 @@ app.get('/register', requireToken, async (req, res) => {
           <label for="clientEmail">Client Email</label>
           <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
         </div>
+        <div class="field">
+          <label for="scheduledDate">Zoom Call Date</label>
+          <input type="date" id="scheduledDate" name="scheduledDate" required>
+        </div>
         <button type="submit" class="btn">Register Client</button>
       </form>
       <h3 style="margin-top:28px;color:#1A2744;font-size:15px">Currently Active Clients</h3>
@@ -920,11 +932,11 @@ app.get('/register', requireToken, async (req, res) => {
 });
 
 app.post('/register', requireToken, async (req, res) => {
-  const { clientName, companyName, industry, position, services, clientEmail } = req.body;
-  if (!clientName || !companyName || !industry || !position || !services || !clientEmail) {
+  const { clientName, companyName, industry, position, services, clientEmail, scheduledDate } = req.body;
+  if (!clientName || !companyName || !industry || !position || !services || !clientEmail || !scheduledDate) {
     return res.status(400).send('All fields are required.');
   }
-  await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail });
+  await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail, scheduledDate });
   const key = clientName.toLowerCase().trim();
   pendingClients.set(key, { clientName, companyName, industry, position, services, clientEmail });
   console.log(`Re-registered client: ${clientName} — ${companyName}`);
@@ -1163,29 +1175,57 @@ app.post('/webhook/fireflies', async (req, res) => {
           clientName: r.client_name, companyName: r.company_name,
           industry: r.industry, position: r.position,
           services: r.services, clientEmail: r.client_email,
-          questionnaireAnswers: r.questionnaire_answers
+          questionnaireAnswers: r.questionnaire_answers,
+          scheduledDate: r.scheduled_date
         }])
       : [...pendingClients.entries()];
 
     let matchedKey = null;
     let context = {};
+    const todayUTC = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-    // Pass 1: all name parts present (most specific)
-    for (const [key, client] of allEntries) {
-      const nameParts = key.split(' ').filter(p => p.length > 1);
-      if (nameParts.length >= 2 && nameParts.every(part => titleLower.includes(part))) {
-        matchedKey = key; context = client; break;
+    // Pass 1: scheduled date match (primary — Fireflies joins all calls via calendar)
+    const todayClients = allEntries.filter(([, c]) => {
+      if (!c.scheduledDate) return false;
+      const d = typeof c.scheduledDate === 'string' ? c.scheduledDate : c.scheduledDate.toISOString().slice(0, 10);
+      return d === todayUTC;
+    });
+
+    if (todayClients.length === 1) {
+      // Exactly one audit scheduled today — unambiguous
+      matchedKey = todayClients[0][0];
+      context = todayClients[0][1];
+      console.log(`Phase 1: Date-matched to today's scheduled client: ${context.clientName}`);
+    } else if (todayClients.length > 1) {
+      // Multiple audits today — fall through to name matching within today's set
+      console.log(`Phase 1: ${todayClients.length} audits scheduled today — using name to disambiguate`);
+      for (const [key, client] of todayClients) {
+        const nameParts = key.split(' ').filter(p => p.length > 1);
+        if (nameParts.some(part => titleLower.includes(part))) {
+          matchedKey = key; context = client; break;
+        }
+      }
+      if (!matchedKey) { matchedKey = todayClients[0][0]; context = todayClients[0][1]; }
+    }
+
+    // Pass 2 (fallback — no date set or no date match): full name parts in title
+    if (!matchedKey) {
+      for (const [key, client] of allEntries) {
+        const nameParts = key.split(' ').filter(p => p.length > 1);
+        if (nameParts.length >= 2 && nameParts.every(part => titleLower.includes(part))) {
+          matchedKey = key; context = client; break;
+        }
       }
     }
 
-    // Pass 2: full key as substring
+    // Pass 3: full key as substring
     if (!matchedKey) {
       for (const [key, client] of allEntries) {
         if (titleLower.includes(key)) { matchedKey = key; context = client; break; }
       }
     }
 
-    // Pass 3: any single name part (first name or last name alone)
+    // Pass 4: any single name part
     if (!matchedKey) {
       for (const [key, client] of allEntries) {
         const nameParts = key.split(' ').filter(p => p.length > 1);
@@ -1195,17 +1235,7 @@ app.post('/webhook/fireflies', async (req, res) => {
       }
     }
 
-    // Pass 4: company name match
-    if (!matchedKey) {
-      for (const [key, client] of allEntries) {
-        const companyWords = (client.companyName || '').toLowerCase().split(' ').filter(w => w.length > 3);
-        if (companyWords.length > 0 && companyWords.some(w => titleLower.includes(w))) {
-          matchedKey = key; context = client; break;
-        }
-      }
-    }
-
-    // Pass 5: only one client pending — use them regardless of meeting name
+    // Pass 5: only one client pending — use them regardless
     if (!matchedKey && allEntries.length === 1) {
       matchedKey = allEntries[0][0];
       context = allEntries[0][1];
