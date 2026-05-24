@@ -689,13 +689,14 @@ app.get('/', requireToken, (req, res) => {
   <div class="card">
     <div class="header">
       <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:52px;display:block;margin-bottom:10px">
-      <p>AI Readiness Audit — New Session</p>
+      <p>AI Readiness Audit — Get Started</p>
     </div>
     <div class="body">
+      <p style="margin-bottom:24px;color:#555;font-size:14px;line-height:1.6">Please fill in your details below. We will send your personalised preparation guide by email, and Frankie will be in touch to arrange your session.</p>
       <form action="/start" method="POST">
         <input type="hidden" name="token" value="${req.query.token || ''}">
         <div class="field">
-          <label for="clientName">Client Name</label>
+          <label for="clientName">Your Name</label>
           <input type="text" id="clientName" name="clientName" placeholder="e.g. Sarah Johnson" required>
         </div>
         <div class="field">
@@ -718,10 +719,6 @@ app.get('/', requireToken, (req, res) => {
           <label for="clientEmail">Client Email</label>
           <input type="email" id="clientEmail" name="clientEmail" placeholder="e.g. sarah@apexlegal.com" required>
         </div>
-        <div class="field">
-          <label for="scheduledDate">Zoom Call Date</label>
-          <input type="date" id="scheduledDate" name="scheduledDate" required>
-        </div>
         <button type="submit" class="btn">Send Questionnaire</button>
       </form>
     </div>
@@ -735,9 +732,9 @@ app.get('/', requireToken, (req, res) => {
 
 // Handle form submission — generate questionnaire, email client, store pending context
 app.post('/start', requireToken, async (req, res) => {
-  const { clientName, companyName, industry, position, services, clientEmail, scheduledDate } = req.body;
+  const { clientName, companyName, industry, position, services, clientEmail } = req.body;
 
-  if (!clientName || !companyName || !industry || !position || !services || !clientEmail || !scheduledDate) {
+  if (!clientName || !companyName || !industry || !position || !services || !clientEmail) {
     return res.status(400).send('All fields are required.');
   }
 
@@ -759,7 +756,7 @@ app.post('/start', requireToken, async (req, res) => {
       <p>Generating a tailored questionnaire for <strong>${clientName}</strong> (${position}) at <strong>${companyName}</strong>.</p>
       <p>It will be emailed to <strong>${clientEmail}</strong> in approximately 30 seconds.</p>
       <p>You will receive a confirmation once it has been sent.</p>
-      <p style="margin-top:16px;padding:12px 16px;background:#f5f0e0;border-left:3px solid #C8A951;font-size:14px;color:#555">Zoom call scheduled for: <strong style="color:#1A2744">${new Date(scheduledDate).toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric', timeZone:'UTC' })}</strong>. Fireflies will join automatically if your calendar is connected.</p>
+      <p style="margin-top:16px;padding:12px 16px;background:#f5f0e0;border-left:3px solid #C8A951;font-size:14px;color:#555">You will receive an email shortly with your preparation guide. Frankie will be in touch to schedule your Zoom session.</p>
     </div>
     <div class="footer">
       <p>Option 10 AI Audit System</p>
@@ -773,7 +770,7 @@ app.post('/start', requireToken, async (req, res) => {
   try {
     const questionnaire = await generateQuestionnaire(clientName, companyName, industry, position, services);
 
-    const uploadToken = await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail, scheduledDate });
+    const uploadToken = await dbSaveClient({ clientName, companyName, industry, position, services, clientEmail });
     pendingClients.set(clientName.toLowerCase().trim(), { clientName, companyName, industry, position, services, clientEmail });
     console.log(`Pending client added: ${clientName} — ${companyName}`);
     const uploadUrl = `https://audit.option10.com/upload/${uploadToken}`;
@@ -830,13 +827,16 @@ app.post('/start', requireToken, async (req, res) => {
       to: NOTIFY_EMAIL,
       subject: `Questionnaire Sent — ${clientName}, ${companyName}`,
       html: `
-        <p><strong>The pre-audit questionnaire has been sent.</strong></p>
-        <p><strong>Client:</strong> ${clientName} — ${position}</p>
-        <p><strong>Company:</strong> ${companyName}</p>
-        <p><strong>Industry:</strong> ${industry}</p>
-        <p><strong>Services:</strong> ${services}</p>
-        <p><strong>Sent to:</strong> ${clientEmail}</p>
-        <p>The system is waiting for their Zoom session. When you schedule the call, name the Zoom meeting: <strong>AI Audit — ${clientName}</strong> — this is how the system matches the recording to the right client.</p>
+        <p><strong>A new prospect has registered for an AI Readiness Audit.</strong></p>
+        <p>Their personalised questionnaire has been sent. No action needed from you yet — you will receive a full briefing email with their completed answers and your next steps once they upload the questionnaire.</p>
+        <br>
+        <table style="font-family:Arial;font-size:14px;border-collapse:collapse">
+          <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Name</strong></td><td style="color:#222">${clientName}</td></tr>
+          <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Company</strong></td><td style="color:#222">${companyName}</td></tr>
+          <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Position</strong></td><td style="color:#222">${position}</td></tr>
+          <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Industry</strong></td><td style="color:#222">${industry}</td></tr>
+          <tr><td style="color:#555;padding:4px 16px 4px 0"><strong>Email</strong></td><td style="color:#222">${clientEmail}</td></tr>
+        </table>
         <br><p style="color:#888">Option 10 AI Audit System</p>
       `
     });
@@ -1016,17 +1016,61 @@ app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
     await dbSaveAnswers(req.params.token, answers);
     console.log(`Questionnaire uploaded for: ${client.client_name}`);
 
-    // Notify Frankie
+    // Notify Frankie — comprehensive action email
+    const registerUrl = `https://audit.option10.com/register?token=${ACCESS_TOKEN}`;
     await transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
-      subject: `Questionnaire Uploaded — ${client.client_name}, ${client.company_name}`,
+      subject: `ACTION REQUIRED — ${client.client_name} has completed their AI Audit questionnaire`,
       html: `
-        <p><strong>${client.client_name}</strong> (${client.company_name}) has uploaded their completed questionnaire.</p>
-        <p>Their answers will be included automatically in the AI analysis after the Zoom call.</p>
-        <hr>
-        <pre style="font-family:Arial;font-size:13px;white-space:pre-wrap;color:#333">${answers}</pre>
-        <br><p style="color:#888">Option 10 AI Audit System</p>
+        <div style="font-family:Arial;max-width:680px;margin:0 auto">
+          <div style="background:#1A2744;padding:24px 32px">
+            <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:44px;display:block;margin-bottom:10px">
+            <p style="color:#C8A951;font-size:18px;font-weight:bold;margin:0">Action Required</p>
+            <p style="color:#a0aec0;font-size:13px;margin:4px 0 0">A prospect has completed their AI Audit questionnaire</p>
+          </div>
+
+          <div style="padding:28px 32px;background:#fff">
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+              <tr><td colspan="2" style="background:#1A2744;color:#C8A951;font-weight:bold;font-size:13px;padding:8px 12px;letter-spacing:0.5px">PROSPECT DETAILS</td></tr>
+              <tr style="background:#f8f9fb"><td style="padding:9px 12px;font-size:14px;color:#555;width:38%"><strong>Name</strong></td><td style="padding:9px 12px;font-size:14px;color:#222">${client.client_name}</td></tr>
+              <tr><td style="padding:9px 12px;font-size:14px;color:#555"><strong>Company</strong></td><td style="padding:9px 12px;font-size:14px;color:#222">${client.company_name}</td></tr>
+              <tr style="background:#f8f9fb"><td style="padding:9px 12px;font-size:14px;color:#555"><strong>Position</strong></td><td style="padding:9px 12px;font-size:14px;color:#222">${client.position}</td></tr>
+              <tr><td style="padding:9px 12px;font-size:14px;color:#555"><strong>Industry</strong></td><td style="padding:9px 12px;font-size:14px;color:#222">${client.industry}</td></tr>
+              <tr style="background:#f8f9fb"><td style="padding:9px 12px;font-size:14px;color:#555"><strong>Services</strong></td><td style="padding:9px 12px;font-size:14px;color:#222">${client.services}</td></tr>
+              <tr><td style="padding:9px 12px;font-size:14px;color:#555"><strong>Email</strong></td><td style="padding:9px 12px;font-size:14px"><a href="mailto:${client.client_email}" style="color:#1A2744">${client.client_email}</a></td></tr>
+            </table>
+
+            <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+              <tr><td style="background:#1A2744;color:#C8A951;font-weight:bold;font-size:13px;padding:8px 12px;letter-spacing:0.5px">YOUR NEXT STEPS</td></tr>
+              <tr><td style="padding:16px 12px;font-size:14px;color:#333;line-height:1.8">
+                <strong style="color:#1A2744">1. Email ${client.client_name} to schedule the 30-minute Zoom call</strong><br>
+                <span style="color:#555">Reply directly to <a href="mailto:${client.client_email}" style="color:#1A2744">${client.client_email}</a> — suggest two or three times that work for you.</span>
+                <br><br>
+                <strong style="color:#1A2744">2. Once you have a date, log it in the system</strong><br>
+                <span style="color:#555">Go to the <a href="${registerUrl}" style="color:#1A2744">registration page</a>, enter ${client.client_name}'s details and the call date. This tells the system which Zoom session belongs to this audit.</span>
+                <br><br>
+                <strong style="color:#1A2744">3. Create the Zoom meeting in your calendar</strong><br>
+                <span style="color:#555">Name it anything you like. Fireflies will join automatically as long as your Google Calendar is connected at <a href="https://app.fireflies.ai" style="color:#1A2744">app.fireflies.ai</a>.</span>
+                <br><br>
+                <strong style="color:#1A2744">4. Run the 30-minute session — then do nothing</strong><br>
+                <span style="color:#555">Your consultant briefing and draft proposal will arrive automatically within 3 minutes of the call ending. Review the proposal, personalise it, and send it from your own email.</span>
+              </td></tr>
+            </table>
+
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td style="background:#1A2744;color:#C8A951;font-weight:bold;font-size:13px;padding:8px 12px;letter-spacing:0.5px">COMPLETED QUESTIONNAIRE</td></tr>
+              <tr><td style="padding:16px 12px;background:#f8f9fb">
+                <pre style="font-family:Arial;font-size:13px;white-space:pre-wrap;color:#333;margin:0">${answers}</pre>
+              </td></tr>
+            </table>
+
+          </div>
+          <div style="padding:14px 32px;background:#f0f2f5;text-align:center">
+            <p style="font-size:12px;color:#aaa;margin:0">Option 10 AI Audit System</p>
+          </div>
+        </div>
       `
     });
 
