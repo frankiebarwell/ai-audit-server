@@ -53,19 +53,36 @@ async function initDb() {
 }
 
 async function dbSaveClient(data) {
-  if (!pool) return;
   const key = data.clientName.toLowerCase().trim();
-  const token = crypto.randomBytes(16).toString('hex');
+  // Always generate the token — DB is preferred storage but Map is the fallback
+  const token = data.uploadToken || crypto.randomBytes(16).toString('hex');
   const scheduledDate = data.scheduledDate || null;
-  await pool.query(`
-    INSERT INTO pending_clients (client_key, client_name, company_name, industry, position, services, client_email, upload_token, scheduled_date)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-    ON CONFLICT (client_key) DO UPDATE SET
-      company_name=$3, industry=$4, position=$5, services=$6, client_email=$7,
-      upload_token=EXCLUDED.upload_token, scheduled_date=$9
-  `, [key, data.clientName, data.companyName, data.industry, data.position, data.services, data.clientEmail, token, scheduledDate]);
-  const row = await pool.query('SELECT upload_token FROM pending_clients WHERE client_key=$1', [key]);
-  return row.rows[0]?.upload_token;
+
+  if (pool) {
+    try {
+      await pool.query(`
+        INSERT INTO pending_clients (client_key, client_name, company_name, industry, position, services, client_email, upload_token, scheduled_date)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ON CONFLICT (client_key) DO UPDATE SET
+          company_name=$3, industry=$4, position=$5, services=$6, client_email=$7,
+          upload_token=EXCLUDED.upload_token, scheduled_date=$9
+      `, [key, data.clientName, data.companyName, data.industry, data.position, data.services, data.clientEmail, token, scheduledDate]);
+    } catch (err) {
+      console.error('DB save error (falling back to memory):', err.message);
+    }
+  } else {
+    console.warn('No DATABASE_URL — client stored in memory only (will not survive restart)');
+  }
+
+  // Always keep in-memory Map as fallback (also stores upload token for /upload route)
+  pendingClients.set(key, {
+    clientName: data.clientName, companyName: data.companyName,
+    industry: data.industry, position: data.position,
+    services: data.services, clientEmail: data.clientEmail,
+    uploadToken: token, scheduledDate
+  });
+
+  return token;
 }
 
 async function dbGetAllClients() {
@@ -971,7 +988,16 @@ app.post('/register', requireToken, async (req, res) => {
 // upload token itself is the authentication.
 
 app.get('/upload/:token', async (req, res) => {
-  const client = await dbGetClientByUploadToken(req.params.token);
+  let client = await dbGetClientByUploadToken(req.params.token);
+  // Fallback: search in-memory Map
+  if (!client) {
+    for (const [, c] of pendingClients.entries()) {
+      if (c.uploadToken === req.params.token) {
+        client = { client_name: c.clientName, company_name: c.companyName, client_email: c.clientEmail };
+        break;
+      }
+    }
+  }
   if (!client) return res.status(404).send('<h2 style="font-family:Arial;padding:40px">Link not found or already used.</h2>');
   const firstName = client.client_name.split(' ')[0];
   res.send(`<!DOCTYPE html>
@@ -1006,7 +1032,15 @@ app.get('/upload/:token', async (req, res) => {
 });
 
 app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
-  const client = await dbGetClientByUploadToken(req.params.token);
+  let client = await dbGetClientByUploadToken(req.params.token);
+  if (!client) {
+    for (const [, c] of pendingClients.entries()) {
+      if (c.uploadToken === req.params.token) {
+        client = { client_name: c.clientName, company_name: c.companyName, industry: c.industry, position: c.position, services: c.services, client_email: c.clientEmail };
+        break;
+      }
+    }
+  }
   if (!client) return res.status(404).send('<h2 style="font-family:Arial;padding:40px">Link not found or already used.</h2>');
   if (!req.file) return res.status(400).send('No file uploaded.');
 
