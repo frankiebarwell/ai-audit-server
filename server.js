@@ -33,23 +33,28 @@ const pool = DATABASE_URL
 
 async function initDb() {
   if (!pool) { console.log('No DATABASE_URL — client persistence disabled'); return; }
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS pending_clients (
-      client_key   TEXT PRIMARY KEY,
-      client_name  TEXT NOT NULL,
-      company_name TEXT NOT NULL,
-      industry     TEXT NOT NULL,
-      position     TEXT NOT NULL,
-      services     TEXT NOT NULL,
-      client_email TEXT NOT NULL,
-      upload_token TEXT UNIQUE NOT NULL,
-      scheduled_date DATE,
-      questionnaire_answers TEXT,
-      created_at   TIMESTAMPTZ DEFAULT NOW()
-    );
-    ALTER TABLE pending_clients ADD COLUMN IF NOT EXISTS scheduled_date DATE
-  `);
-  console.log('Database ready');
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pending_clients (
+        client_key            TEXT PRIMARY KEY,
+        client_name           TEXT NOT NULL,
+        company_name          TEXT NOT NULL,
+        industry              TEXT NOT NULL,
+        position              TEXT NOT NULL,
+        services              TEXT NOT NULL,
+        client_email          TEXT NOT NULL,
+        upload_token          TEXT UNIQUE NOT NULL,
+        scheduled_date        DATE,
+        questionnaire_answers TEXT,
+        created_at            TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // Run ALTER separately — pg does not support multiple statements in one query
+    await pool.query(`ALTER TABLE pending_clients ADD COLUMN IF NOT EXISTS scheduled_date DATE`);
+    console.log('Database ready');
+  } catch (err) {
+    console.error('Database init error (server will continue with in-memory fallback):', err.message);
+  }
 }
 
 async function dbSaveClient(data) {
@@ -1017,16 +1022,27 @@ app.get('/upload/:token', async (req, res) => {
     <div class="body">
       <p>Hi ${firstName}, please upload your completed questionnaire below.</p>
       <p style="font-size:14px;color:#666;margin-top:8px">Accepted formats: .docx or .doc only. Make sure you have saved your answers before uploading.</p>
-      <form action="/upload/${req.params.token}" method="POST" enctype="multipart/form-data" style="margin-top:24px">
+      <form id="uploadForm" action="/upload/${req.params.token}" method="POST" enctype="multipart/form-data" style="margin-top:24px">
         <div class="field">
           <label for="questionnaire">Your completed questionnaire</label>
           <input type="file" id="questionnaire" name="questionnaire" accept=".docx,.doc" required style="padding:8px 0;border:none;font-size:15px">
         </div>
-        <button type="submit" class="btn">Upload Questionnaire</button>
+        <button type="submit" id="submitBtn" class="btn">Upload Questionnaire</button>
+        <p id="uploadStatus" style="display:none;margin-top:16px;font-size:14px;color:#1A2744;font-weight:bold">Uploading your file, please wait...</p>
       </form>
     </div>
     <div class="footer"><p>Option 10 AI Audit System</p></div>
   </div>
+  <script>
+    document.getElementById('uploadForm').addEventListener('submit', function() {
+      var btn = document.getElementById('submitBtn');
+      var status = document.getElementById('uploadStatus');
+      btn.disabled = true;
+      btn.textContent = 'Uploading...';
+      btn.style.opacity = '0.6';
+      status.style.display = 'block';
+    });
+  </script>
 </body>
 </html>`);
 });
@@ -1050,9 +1066,38 @@ app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
     await dbSaveAnswers(req.params.token, answers);
     console.log(`Questionnaire uploaded for: ${client.client_name}`);
 
-    // Notify Frankie — comprehensive action email
+    // Respond immediately so the user sees confirmation without waiting for email
+    const firstName = client.client_name.split(' ')[0];
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Questionnaire Received</title>
+  <style>${CARD_STYLES}</style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:52px;display:block;margin-bottom:10px">
+      <p>AI Readiness Audit</p>
+    </div>
+    <div class="body" style="text-align:center;padding:40px 32px">
+      <div style="width:72px;height:72px;border-radius:50%;background:#e6f4ea;display:flex;align-items:center;justify-content:center;margin:0 auto 24px">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2e7d32" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <h2 style="color:#1A2744;font-size:22px;margin:0 0 12px">Questionnaire Received</h2>
+      <p style="color:#333;font-size:16px;margin:0 0 16px">Thank you, ${firstName}. Your completed questionnaire has been received successfully.</p>
+      <p style="color:#666;font-size:14px;line-height:1.7;margin:0">The Option 10 team will review your answers ahead of your Zoom session. You do not need to do anything else at this stage.<br><br>You will hear from us shortly to confirm the date and time of your call.</p>
+    </div>
+    <div class="footer"><p>Option 10 | frankie@option10.com</p></div>
+  </div>
+</body>
+</html>`);
+
+    // Send notification email to Frankie — fire and forget so user already has their confirmation
     const registerUrl = `https://audit.option10.com/register?token=${ACCESS_TOKEN}`;
-    await transporter.sendMail({
+    transporter.sendMail({
       from: GMAIL_USER,
       to: NOTIFY_EMAIL,
       subject: `ACTION REQUIRED — ${client.client_name} has completed their AI Audit questionnaire`,
@@ -1106,34 +1151,33 @@ app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
           </div>
         </div>
       `
-    });
+    }).catch(err => console.error('Upload notification email failed:', err.message));
 
-    const firstName = client.client_name.split(' ')[0];
-    res.send(`<!DOCTYPE html>
+  } catch (err) {
+    console.error('Upload error:', err.message);
+    res.status(500).send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upload Received</title>
+  <title>Upload Error</title>
   <style>${CARD_STYLES}</style>
 </head>
 <body>
   <div class="card">
     <div class="header">
       <img src="data:image/png;base64,${LOGO_B64}" alt="Option 10" style="height:52px;display:block;margin-bottom:10px">
-      <p>AI Readiness Audit — Questionnaire Upload</p>
+      <p>AI Readiness Audit</p>
     </div>
-    <div class="body">
-      <p>Thank you, ${firstName}. Your questionnaire has been received.</p>
-      <p style="margin-top:12px;color:#555">Your answers will be used alongside the conversation in your Zoom session to produce a more detailed analysis. See you on the call.</p>
+    <div class="body" style="text-align:center;padding:40px 32px">
+      <h2 style="color:#c0392b;font-size:20px;margin:0 0 12px">Upload Error</h2>
+      <p style="color:#333;font-size:15px;margin:0 0 16px">Something went wrong processing your file.</p>
+      <p style="color:#666;font-size:14px">Please try again, or email your completed questionnaire directly to <a href="mailto:frankie@option10.com" style="color:#1A2744">frankie@option10.com</a>.<br><br>Error detail: ${err.message}</p>
     </div>
     <div class="footer"><p>Option 10 | frankie@option10.com</p></div>
   </div>
 </body>
 </html>`);
-  } catch (err) {
-    console.error('Upload error:', err.message);
-    res.status(500).send('Something went wrong processing your file. Please try again or contact frankie@option10.com.');
   }
 });
 
