@@ -1047,6 +1047,92 @@ app.post('/upload/:token', upload.single('questionnaire'), async (req, res) => {
   }
 });
 
+// ── Full auto-chain: analysis → proposal, fires after transcript is received ──
+async function runFullChain(meetingId) {
+  const audit = auditStore[meetingId];
+  if (!audit) return;
+
+  console.log(`Auto-chain: Starting for ${audit.title}`);
+
+  try {
+    // Phase 2 — analysis
+    const analysis = await analyseTranscript(audit.transcript, {
+      clientName: audit.clientName, companyName: audit.companyName,
+      industry: audit.industry, position: audit.position,
+      services: audit.services, questionnaireAnswers: audit.questionnaireAnswers
+    });
+    auditStore[meetingId].analysis = analysis;
+    console.log(`Auto-chain: Analysis complete for ${audit.title}`);
+
+    await transporter.sendMail({
+      from: GMAIL_USER,
+      to: NOTIFY_EMAIL,
+      subject: `Consultant Briefing — ${audit.title}`,
+      html: `
+        <div style="font-family:Arial;max-width:700px">
+          <div style="background:#1A2744;padding:20px 28px">
+            <span style="color:#C8A951;font-size:18px;font-weight:bold">Consultant Briefing</span>
+            <span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span>
+          </div>
+          <div style="padding:24px;background:#fff">
+            ${audit.questionnaireAnswers ? '<p style="background:#FDF6E3;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #C8A951"><strong>Note:</strong> This analysis includes the client\'s uploaded questionnaire answers.</p>' : ''}
+            <p style="color:#888;font-size:13px">Pay particular attention to <strong>Section 7 — Consultant Notes</strong> for buying signals and red flags.</p>
+            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+            <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${analysis}</pre>
+            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+            <p style="font-size:13px;color:#888">The draft proposal is generating now and will arrive in a separate email in approximately 60 seconds. If it does not arrive, use the fallback link: <a href="https://audit.option10.com/propose/${meetingId}">Generate Proposal</a></p>
+          </div>
+        </div>
+      `
+    });
+    console.log(`Auto-chain: Briefing email sent for ${audit.title}`);
+
+    // Phase 3 — proposal
+    const proposal = await generateProposal(analysis);
+    console.log(`Auto-chain: Proposal complete for ${audit.title}`);
+
+    await transporter.sendMail({
+      from: GMAIL_USER,
+      to: NOTIFY_EMAIL,
+      subject: `Draft Proposal Ready — ${audit.title}`,
+      html: `
+        <div style="font-family:Arial;max-width:700px">
+          <div style="background:#1A2744;padding:20px 28px">
+            <span style="color:#C8A951;font-size:18px;font-weight:bold">Draft Client Proposal</span>
+            <span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span>
+          </div>
+          <div style="padding:24px;background:#fff">
+            <p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalise before sending. Confirm pricing, adjust any figures that feel generic, then send from your own email.</p>
+            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+            <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${proposal}</pre>
+          </div>
+          <div style="padding:12px 28px;background:#f8f8f8;text-align:center">
+            <p style="font-size:12px;color:#aaa">Option 10 AI Audit System</p>
+          </div>
+        </div>
+      `
+    });
+    console.log(`Auto-chain: Proposal email sent for ${audit.title}`);
+
+  } catch (err) {
+    console.error(`Auto-chain error for ${audit.title}:`, err.message);
+    // Send failure alert with manual fallback links
+    await transporter.sendMail({
+      from: GMAIL_USER,
+      to: NOTIFY_EMAIL,
+      subject: `Auto-generation failed — ${audit.title} — action needed`,
+      html: `
+        <p><strong>The automatic analysis failed for ${audit.title}.</strong></p>
+        <p><strong>Error:</strong> ${err.message}</p>
+        <p>Use the links below to trigger manually:</p>
+        <p><a href="https://audit.option10.com/analyse/${meetingId}" style="background:#1A2744;color:#C8A951;padding:10px 20px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Consultant Briefing</a></p>
+        <p style="margin-top:12px"><a href="https://audit.option10.com/propose/${meetingId}" style="background:#555;color:#fff;padding:10px 20px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Proposal (if briefing already done)</a></p>
+        <br><p style="color:#888">Option 10 AI Audit System</p>
+      `
+    }).catch(e => console.error('Failed to send error alert:', e.message));
+  }
+}
+
 // Phase 1: Fireflies webhook fires when meeting is transcribed
 app.post('/webhook/fireflies', async (req, res) => {
   res.sendStatus(200); // acknowledge immediately
@@ -1068,39 +1154,70 @@ app.post('/webhook/fireflies', async (req, res) => {
     }
 
     const { title, text } = await fetchTranscript(meetingId);
-
-    // Match the meeting title against pending clients by name
-    // Meeting should be named e.g. "AI Audit — Lex Figueroa" or "Lex Figueroa AI Audit"
-    let matchedKey = null;
-    let context = {};
     const titleLower = (title || '').toLowerCase();
 
-    // Check DB first, then fall back to in-memory map
+    // Build list of pending clients from DB (preferred) or in-memory fallback
     const allClients = await dbGetAllClients();
     const allEntries = allClients.length > 0
-      ? allClients.map(r => [r.client_key, { clientName: r.client_name, companyName: r.company_name, industry: r.industry, position: r.position, services: r.services, clientEmail: r.client_email, questionnaireAnswers: r.questionnaire_answers }])
+      ? allClients.map(r => [r.client_key, {
+          clientName: r.client_name, companyName: r.company_name,
+          industry: r.industry, position: r.position,
+          services: r.services, clientEmail: r.client_email,
+          questionnaireAnswers: r.questionnaire_answers
+        }])
       : [...pendingClients.entries()];
 
+    let matchedKey = null;
+    let context = {};
+
+    // Pass 1: all name parts present (most specific)
     for (const [key, client] of allEntries) {
       const nameParts = key.split(' ').filter(p => p.length > 1);
       if (nameParts.length >= 2 && nameParts.every(part => titleLower.includes(part))) {
-        matchedKey = key;
-        context = client;
-        break;
-      }
-      if (titleLower.includes(key)) {
-        matchedKey = key;
-        context = client;
-        break;
+        matchedKey = key; context = client; break;
       }
     }
 
+    // Pass 2: full key as substring
+    if (!matchedKey) {
+      for (const [key, client] of allEntries) {
+        if (titleLower.includes(key)) { matchedKey = key; context = client; break; }
+      }
+    }
+
+    // Pass 3: any single name part (first name or last name alone)
+    if (!matchedKey) {
+      for (const [key, client] of allEntries) {
+        const nameParts = key.split(' ').filter(p => p.length > 1);
+        if (nameParts.some(part => titleLower.includes(part))) {
+          matchedKey = key; context = client; break;
+        }
+      }
+    }
+
+    // Pass 4: company name match
+    if (!matchedKey) {
+      for (const [key, client] of allEntries) {
+        const companyWords = (client.companyName || '').toLowerCase().split(' ').filter(w => w.length > 3);
+        if (companyWords.length > 0 && companyWords.some(w => titleLower.includes(w))) {
+          matchedKey = key; context = client; break;
+        }
+      }
+    }
+
+    // Pass 5: only one client pending — use them regardless of meeting name
+    if (!matchedKey && allEntries.length === 1) {
+      matchedKey = allEntries[0][0];
+      context = allEntries[0][1];
+      console.log(`Phase 1: Single pending client auto-matched: ${context.clientName}`);
+    }
+
     if (matchedKey) {
-      console.log(`Phase 1: Matched meeting "${title}" to pending client: ${context.clientName}`);
+      console.log(`Phase 1: Matched meeting "${title}" to client: ${context.clientName}`);
       await dbDeleteClient(matchedKey);
       pendingClients.delete(matchedKey);
     } else {
-      console.log(`Phase 1: No client match found for meeting "${title}" — processing with title only`);
+      console.log(`Phase 1: No client match for "${title}" — proceeding with meeting title only`);
     }
 
     const displayTitle = context.clientName
@@ -1119,150 +1236,68 @@ app.post('/webhook/fireflies', async (req, res) => {
       analysis: null
     };
 
-    console.log('Phase 1: Transcript fetched for:', displayTitle);
+    console.log(`Phase 1: Transcript stored for "${displayTitle}" (${text.split(' ').length} words) — auto-chain starting`);
 
-    await transporter.sendMail({
-      from: GMAIL_USER,
-      to: NOTIFY_EMAIL,
-      subject: `AI Audit for ${displayTitle} is Ready`,
-      html: `
-        <p><strong>A new AI Readiness Audit transcript is ready.</strong></p>
-        <p><strong>Client:</strong> ${displayTitle}</p>
-        ${context.industry ? `<p><strong>Industry:</strong> ${context.industry}</p>` : ''}
-        <p><strong>Transcript length:</strong> ${text.split(' ').length} words</p>
-        <p><strong>Meeting ID:</strong> ${meetingId}</p>
-        <p>When you are ready to run the AI analysis, click the button below:</p>
-        <p><a href="https://ai-audit-server-production-b423.up.railway.app/analyse/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Consultant Briefing</a></p>
-        <br><p style="color:#888">Option 10 AI Audit System</p>
-      `
-    });
+    // Auto-trigger full chain — fire and forget (don't block webhook response)
+    runFullChain(meetingId);
 
-    console.log('Phase 1: Notification email sent for:', displayTitle);
   } catch (err) {
     console.error('Phase 1 error:', err.message);
   }
 });
 
-// Phase 2: GET version so you can click a link in the email
+// Manual fallback: re-run full chain (analysis + proposal) for a given meeting
+// Only needed if the automatic chain failed — link is included in any failure alert email
 app.get('/analyse/:meetingId', async (req, res) => {
-  res.send(`<html><body style="font-family:Arial;padding:40px">
-    <h2>Triggering analysis...</h2>
-    <p>The consultant briefing is being generated. You will receive an email in approximately 60 seconds.</p>
-    <p style="color:#888">Option 10 AI Audit System</p>
-  </body></html>`);
   const { meetingId } = req.params;
   const audit = auditStore[meetingId];
-  if (!audit) { console.error('Phase 2 GET: No audit found for meeting:', meetingId); return; }
-  try {
-    const analysis = await analyseTranscript(audit.transcript, { clientName: audit.clientName, companyName: audit.companyName, industry: audit.industry, position: audit.position, services: audit.services, questionnaireAnswers: audit.questionnaireAnswers });
-    auditStore[meetingId].analysis = analysis;
-    await transporter.sendMail({
-      from: GMAIL_USER, to: NOTIFY_EMAIL,
-      subject: `AI Analysis for ${audit.title} is Ready`,
-      html: `<p><strong>Your AI Readiness Analysis is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><p><strong>Meeting ID:</strong> ${meetingId}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre><hr><p>When ready for the client proposal, click below:</p><p><a href="https://ai-audit-server-production-b423.up.railway.app/propose/${meetingId}" style="background:#1A2744;color:#C8A951;padding:12px 24px;text-decoration:none;font-weight:bold;border-radius:4px">Generate Client Proposal</a></p><br><p style="color:#888">Option 10 AI Audit System</p>`
-    });
-    console.log('Phase 2 GET: Analysis email sent for:', audit.title);
-  } catch (err) { console.error('Phase 2 GET error:', err.message); }
+  if (!audit) {
+    return res.send('<html><body style="font-family:Arial;padding:40px"><h2>Session not found.</h2><p>The server may have restarted since this meeting was processed. Contact frankie@option10.com.</p></body></html>');
+  }
+  res.send('<html><body style="font-family:Arial;padding:40px"><h2>Regenerating analysis and proposal...</h2><p>You will receive both emails in the next 2-3 minutes.</p><p style="color:#888">Option 10 AI Audit System</p></body></html>');
+  runFullChain(meetingId);
 });
 
-// Phase 2: POST version (keep for backwards compatibility)
+// Manual fallback: re-run full chain via POST (for backwards compatibility)
 app.post('/analyse/:meetingId', async (req, res) => {
   res.sendStatus(200);
-
   const { meetingId } = req.params;
-  const audit = auditStore[meetingId];
-
-  if (!audit) {
-    console.error('Phase 2: No audit found for meeting:', meetingId);
-    return;
-  }
-
-  console.log('Phase 2: Running analysis for:', audit.title);
-
-  try {
-    const analysis = await analyseTranscript(audit.transcript, { clientName: audit.clientName, companyName: audit.companyName, industry: audit.industry, position: audit.position, services: audit.services, questionnaireAnswers: audit.questionnaireAnswers });
-    auditStore[meetingId].analysis = analysis;
-
-    await transporter.sendMail({
-      from: GMAIL_USER,
-      to: NOTIFY_EMAIL,
-      subject: `AI Analysis for ${audit.title} is Ready`,
-      html: `
-        <p><strong>Your AI Readiness Analysis is complete.</strong></p>
-        <p><strong>Client:</strong> ${audit.title}</p>
-        <p><strong>Meeting ID:</strong> ${meetingId}</p>
-        <hr>
-        <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${analysis}</pre>
-        <hr>
-        <p>When you are ready to generate the client proposal, reply to this email with the single word:</p>
-        <p><strong>PROPOSE</strong></p>
-        <br><p style="color:#888">Option 10 AI Audit System</p>
-      `
-    });
-
-    console.log('Phase 2: Analysis email sent for:', audit.title);
-  } catch (err) {
-    console.error('Phase 2 error:', err.message);
-  }
+  if (!auditStore[meetingId]) { console.error('Fallback analyse: No audit found for', meetingId); return; }
+  runFullChain(meetingId);
 });
 
-// Phase 3: GET version so you can click a link in the email
+// Manual fallback: proposal only (if briefing already done and stored)
 app.get('/propose/:meetingId', async (req, res) => {
-  res.send(`<html><body style="font-family:Arial;padding:40px">
-    <h2>Generating client proposal...</h2>
-    <p>The proposal is being written. You will receive an email in approximately 60 seconds.</p>
-    <p style="color:#888">Option 10 AI Audit System</p>
-  </body></html>`);
   const { meetingId } = req.params;
   const audit = auditStore[meetingId];
-  if (!audit || !audit.analysis) { console.error('Phase 3 GET: No analysis found for meeting:', meetingId); return; }
+  if (!audit || !audit.analysis) {
+    return res.send('<html><body style="font-family:Arial;padding:40px"><h2>No briefing found for this session.</h2><p>Use the /analyse link to regenerate from the beginning.</p></body></html>');
+  }
+  res.send('<html><body style="font-family:Arial;padding:40px"><h2>Regenerating proposal...</h2><p>You will receive the proposal email in approximately 60 seconds.</p><p style="color:#888">Option 10 AI Audit System</p></body></html>');
   try {
     const proposal = await generateProposal(audit.analysis);
     await transporter.sendMail({
       from: GMAIL_USER, to: NOTIFY_EMAIL,
-      subject: `AI Proposal for ${audit.title} is Ready`,
-      html: `<p><strong>The client proposal draft is complete.</strong></p><p><strong>Client:</strong> ${audit.title}</p><hr><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${proposal}</pre><hr><p>Review and edit before sending to the client.</p><br><p style="color:#888">Option 10 AI Audit System</p>`
+      subject: `Draft Proposal Ready — ${audit.title}`,
+      html: `<div style="font-family:Arial;max-width:700px"><div style="background:#1A2744;padding:20px 28px"><span style="color:#C8A951;font-size:18px;font-weight:bold">Draft Client Proposal</span><span style="color:#a0aec0;font-size:14px;margin-left:12px">${audit.title}</span></div><div style="padding:24px"><p style="background:#f0f7f0;padding:10px 14px;font-size:13px;color:#555;border-left:3px solid #4a9a6a">Review and personalise before sending.</p><hr style="border:none;border-top:1px solid #eee"><pre style="font-family:Arial;font-size:14px;white-space:pre-wrap;color:#222">${proposal}</pre></div></div>`
     });
-    console.log('Phase 3 GET: Proposal email sent for:', audit.title);
-  } catch (err) { console.error('Phase 3 GET error:', err.message); }
+    console.log('Fallback propose: Email sent for', audit.title);
+  } catch (err) { console.error('Fallback propose error:', err.message); }
 });
 
-// Phase 3: POST version (keep for backwards compatibility)
 app.post('/propose/:meetingId', async (req, res) => {
   res.sendStatus(200);
-
   const { meetingId } = req.params;
   const audit = auditStore[meetingId];
-
-  if (!audit || !audit.analysis) {
-    console.error('Phase 3: No analysis found for meeting:', meetingId);
-    return;
-  }
-
-  console.log('Phase 3: Generating proposal for:', audit.title);
-
+  if (!audit || !audit.analysis) { console.error('Fallback propose POST: No analysis for', meetingId); return; }
   try {
     const proposal = await generateProposal(audit.analysis);
-
     await transporter.sendMail({
-      from: GMAIL_USER,
-      to: NOTIFY_EMAIL,
-      subject: `AI Proposal for ${audit.title} is Ready`,
-      html: `
-        <p><strong>The client proposal draft is complete.</strong></p>
-        <p><strong>Client:</strong> ${audit.title}</p>
-        <hr>
-        <pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${proposal}</pre>
-        <hr>
-        <p>Review and edit before sending to the client.</p>
-        <br><p style="color:#888">Option 10 AI Audit System</p>
-      `
+      from: GMAIL_USER, to: NOTIFY_EMAIL,
+      subject: `Draft Proposal Ready — ${audit.title}`,
+      html: `<pre style="font-family:Arial;font-size:14px;white-space:pre-wrap">${proposal}</pre>`
     });
-
-    console.log('Phase 3: Proposal email sent for:', audit.title);
-  } catch (err) {
-    console.error('Phase 3 error:', err.message);
-  }
+  } catch (err) { console.error('Fallback propose POST error:', err.message); }
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────
